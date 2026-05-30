@@ -14,7 +14,7 @@
 
 ## Architecture Overview
 
-Zenith OS boots from a raw MBR floppy disk image, initializes the CPU, reconfigure hardware PIC chips, enables two-level page directories with process-level isolation, mounts a secondary hard disk formatted with a custom file system (**ZenithFS**), and drops privilege levels to transition execution into userland.
+Zenith OS boots from a raw MBR floppy disk image, initializes the CPU, reconfigures hardware PIC chips, enables two-level page directories with process-level isolation, mounts a secondary hard disk formatted with a custom file system (**ZenithFS**), and drops privilege levels to transition execution into userland.
 
 ```mermaid
 graph TD
@@ -35,58 +35,58 @@ graph TD
 ## Technical Deep Dive
 
 ### 1. Bootloader & Kernel Initialization Sequence
-* **Stage 1 MBR Bootloader (`boot/stage1.asm`)**: Resides in the first 512-byte sector of the floppy image. Resets the disk controller, registers the boot drive number, reads the Stage 2 bootloader from Sector 2 onwards into RAM, and transfers execution.
-* **Stage 2 Bootloader (`boot/stage2.asm`)**:
+* **Stage 1 MBR Bootloader ([boot/stage1.asm](file:///Users/apple/Personal_Files/Codes/ZenithOS/boot/stage1.asm))**: Resides in the first 512-byte sector of the floppy image. Resets the disk controller, registers the boot drive number, reads the Stage 2 bootloader from Sector 2 onwards into RAM, and transfers execution.
+* **Stage 2 Bootloader ([boot/stage2.asm](file:///Users/apple/Personal_Files/Codes/ZenithOS/boot/stage2.asm))**:
   * **A20 Gate**: Activates the A20 gate via the PS/2 keyboard controller to allow addressing beyond 1MB.
   * **VESA VBE Graphics Selection**: Queries BIOS VESA Extensions to get linear framebuffer data. Scans for mode `0x411B` (1280x1024 pixels, 24-bit True Color RGB). Sets the video mode and writes a custom `BootInfo` block to memory address `0x7000`.
   * **Protected Mode Entry**: Loads a temporary 32-bit Global Descriptor Table (GDT), sets the PE (Protection Enable) bit in the control register `CR0`, performs a far jump to clear the prefetch queue, and enters 32-bit Protected Mode.
   * **Kernel Loading**: Reads the compiled raw kernel binary from Sector 17 onwards into memory address `0x100000` (1MB mark) and jumps to its entry point.
 
 ### 2. Memory Management Architecture
-* **Physical Memory Manager (PMM)**: Tracks physical RAM pages (4KB frames) using a simple allocation bitmap starting above the kernel boundaries (16MB mark) to prevent kernel space overrides.
-* **Virtual Memory Manager (VMM) & Paging**:
+* **Physical Memory Manager ([kernel/paging.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/paging.c))**: Tracks physical RAM pages (4KB frames) using a simple allocation bitmap starting above the kernel boundaries (16MB mark) to prevent kernel space overrides.
+* **Virtual Memory Manager (VMM) & Paging ([kernel/paging.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/paging.c))**:
   * Employs two-level page directories (`PageDirectory` containing 1024 `PageTable` entries).
   * The master kernel page directory identity-maps the first 128MB of physical RAM to maintain consistent access to hardware, MMIO, and kernel structures.
 * **Private Directory Separation (CR3 Isolation)**:
   * To implement process isolation, every spawned process is allocated its own private page directory via `vmm_create_page_dir()`, copying global kernel space mappings.
   * User-accessible application code is mapped starting at virtual boundary `0x40000000` up to `0x48000000` (128MB limit).
   * During process swaps, the scheduler reloads the CPU `CR3` register with the task's private directory address, isolating user tasks from each other and shielding Ring 0 kernel pages.
-* **Kernel Heap Allocator (`kernel/heap.c`)**: Provides dynamic kernel memory allocation capabilities (similar to `malloc` and `free`). It manages memory pools in kernel space to track dynamically allocated structures (such as `Task` nodes).
+* **Kernel Heap Allocator ([kernel/heap.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/heap.c))**: Provides dynamic kernel memory allocation capabilities (similar to `malloc` and `free`). It manages memory pools in kernel space to track dynamically allocated structures (such as `Task` nodes).
 
 ### 3. Preemptive Task Scheduler & Context Switching
 * **Preemptive Round-Robin Engine**: Driven by the Programmable Interval Timer (PIT) calibrated to 100Hz (10ms ticks). When a timer interrupt fires, the handler calls `scheduler_tick()`. If a task's runtime slice expires, it invokes `scheduler_yield()`.
-* **Task State Machine**: Coordinates tasks across four primary states:
+* **Task State Machine ([kernel/task.h](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/task.h))**: Coordinates tasks across four primary states:
   * `TASK_READY`: Queued and waiting for CPU execution time.
   * `TASK_RUNNING`: Currently occupying the processor.
   * `TASK_SLEEPING`: Blocked for a specific interval, with `sleep_ticks` decremented at each scheduler heartbeat.
   * `TASK_DEAD`: Terminated and pending garbage collection.
-* **Context Switching Mechanics**: Saves register states onto the current task's stack (EDI, ESI, EBP, ESP, EBX, EDX, ECX, EAX). The CPU pushes interrupt stack frames (EIP, CS, EFLAGS, ESP, SS). The scheduler switches ESP to the next ready task, swaps the virtual memory directory using the `CR3` register, and returns to execution using `iret`.
-* **Kernel Heartbeat Thread**: Spawns a background kernel task that prints periodic diagnostic heartbeat logs to the COM1 serial interface.
+* **Context Switching Mechanics ([kernel/task.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/task.c))**: Saves register states onto the current task's stack (EDI, ESI, EBP, ESP, EBX, EDX, ECX, EAX). The CPU pushes interrupt stack frames (EIP, CS, EFLAGS, ESP, SS). The scheduler switches ESP to the next ready task, swaps the virtual memory directory using the `CR3` register, and returns to execution using `iret`.
+* **Kernel Heartbeat Thread ([kernel/kernel.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/kernel.c))**: Spawns a background kernel task that prints periodic diagnostic heartbeat logs to the COM1 serial interface.
 
 ### 4. Interrupt Handling & GDT/IDT
-* **Global Descriptor Table (GDT) & Task State Segment (TSS)**:
+* **Global Descriptor Table (GDT) & Task State Segment (TSS) ([kernel/gdt.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/gdt.c))**:
   * Registers five main descriptors: Null Descriptor, Kernel Code (`0x08`), Kernel Data (`0x10`), User Code (`0x1B` with RPL 3 privilege), and User Data (`0x23` with RPL 3 privilege).
   * A custom TSS descriptor (`0x28`) is configured with the kernel stack bottom (`0x90000`). When a software interrupt or hardware exception occurs in Ring 3, the CPU automatically reads the TSS to restore the Ring 0 stack pointer, preventing user stack pollution.
-* **Interrupt Descriptor Table (IDT) & PIC Remapping**:
+* **Interrupt Descriptor Table (IDT) & PIC Remapping ([kernel/idt.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/idt.c))**:
   * Remaps the dual Intel 8259 PIC controllers (Master PIC IRQ 0-7 remapped to interrupts 32-39, Slave PIC IRQ 8-15 to interrupts 40-47) to avoid overlaps with Intel-reserved CPU exception vectors (0-31).
   * Configures 256 interrupt gates routing CPU exceptions (such as Double Faults and Page Faults), hardware interrupts (timer and keyboard), and software system calls (`int 0x80`).
 
 ### 5. High-Resolution Anti-Aliased Graphics Engine
-* **Bilinear Character Upscaling**: Upscales standard 8x8 font bitmaps to a high-density 12x24 pixel grid. Instead of blocky scaling, a custom bilinear interpolation algorithm calculates fractional weights and blends character edges with the active background, producing smooth, anti-aliased retro-futuristic text.
-* **Geometry Rasterization Engine**: Custom algorithms for drawing pixels, lines, circles, filled circles, rounded rectangles, and rounded rectangles with outlines.
+* **Bilinear Character Upscaling ([kernel/graphics.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/graphics.c))**: Upscales standard 8x8 font bitmaps to a high-density 12x24 pixel grid. Instead of blocky scaling, a custom bilinear interpolation algorithm calculates fractional weights and blends character edges with the active background, producing smooth, anti-aliased retro-futuristic text.
+* **Geometry Rasterization Engine ([kernel/graphics.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/graphics.c))**: Custom algorithms for drawing pixels, lines, circles, filled circles, rounded rectangles, and rounded rectangles with outlines.
 * **Desktop Styling**: Paints a multi-toned cosmic gradient background (dark indigo to cosmic violet). Windows and the console card utilize layered drop shadows (`0x030305`, `0x050508`, `0x08080C`) and a carbon-black workspace surrounded by Cyber Cyan borders.
 * **Power Management Interfaces**:
   * **ACPI Shutdown**: Writes QEMU-specific power-off parameters to emulator I/O ports (`0x604`, `0xB004`, `0x4004`) to cleanly shut down virtual machines.
   * **PS/2 Reset**: Writes command byte `0xFE` to the keyboard controller port `0x64` to trigger a CPU system reboot.
 
 ### 6. Storage & Custom ZenithFS Filesystem
-* **ATA Hard Disk Driver**: Communicates with the primary IDE controller using low-level I/O port polling commands to read and write sectors.
-* **ZenithFS Structure**: A custom flat filesystem formatting raw hard disk images. Uses single-indirect addressing block tables mapping disk sectors, enabling compiled user binaries up to 70KB to be read and executed. Includes a Python compiler utility `zfs_tool.py` to compile files, list directories, and package binary disk images.
+* **ATA Hard Disk Driver ([kernel/zenithfs.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/zenithfs.c))**: Communicates with the primary IDE controller using low-level I/O port polling commands to read and write sectors.
+* **ZenithFS Structure**: A custom flat filesystem formatting raw hard disk images. Uses single-indirect addressing block tables mapping disk sectors, enabling compiled user binaries up to 70KB to be read and executed. Includes a Python compiler utility [zfs_tool.py](file:///Users/apple/Personal_Files/Codes/ZenithOS/zfs_tool.py) to compile files, list directories, and package binary disk images.
 
 ### 7. Ring 3 Privilege Isolation & Security Sandboxing
 * **Privilege Drop**: The kernel drops privileges to transition from Supervisor Ring 0 to User Ring 3. It structures the assembly stack to mimic an interrupt state, pushes user segment registers (`0x23` for DS/SS, `0x1B` for CS), pushes the instruction pointer (`0x40000000`), and executes `iret`.
-* **CR3 Paging Isolation**: Prevents unauthorized page overrides. Users cannot map memory outside the designated user zone (`0x40000000` - `0x48000000`). Attempting to read or write kernel space triggers a hardware Page Fault (`#PF`, Exception 14) and terminates the task.
-* **Syscall Verification**: System calls verify user-provided pointer arguments via `syscall_verify_pointer()` before reading or writing data.
+* **CR3 Paging Isolation**: Prevents unauthorized page overrides. Users cannot map memory outside the designated user zone (`0x40000000` - `0x48000000`). Attempting to read or write kernel virtual space triggers a hardware Page Fault (`#PF`, Exception 14) and terminates the task.
+* **Syscall Verification ([kernel/syscall.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/syscall.c))**: System calls verify user-provided pointer arguments via `syscall_verify_pointer()` before reading or writing data.
 * **TOCTOU Protection**: User space string parameters (like filenames) are copied character-by-character into local kernel buffers immediately upon system call entry, preventing Time-of-Check to Time-of-Use double-fetch memory attacks.
 * **Stack Smashing Protections (Canaries)**: The OS compiles userland and kernel space targets with `-fstack-protector-all`. The stack canary (`__stack_chk_guard`) is initialized early in the boot sequence using entropy from the CPU timestamp counter (TSC via `rdtsc`). Detection of an overflow triggers `__stack_chk_fail`, printing a security alert and halting the CPU.
 * **Zeroed User Stacks**: Allocates a 32KB stack (`0x400F8000` to `0x40100000`) per process, which is zeroed out at startup to prevent information leaks from dirty memory pages.
@@ -96,7 +96,7 @@ graph TD
 
 ## System Calls (Int 0x80)
 
-Zenith OS exposes a software interrupt interface via vector `0x80`. Registers `EAX` specifies the syscall number, while parameters are passed via `EBX`, `ECX`, and `EDX`.
+Zenith OS exposes a software interrupt interface via vector `0x80`. Register `EAX` specifies the syscall number, while parameters are passed via `EBX`, `ECX`, and `EDX`.
 
 | System Call | EAX | EBX | ECX | EDX | Return (EAX) | Description |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -119,9 +119,9 @@ Zenith OS exposes a software interrupt interface via vector `0x80`. Registers `E
 
 ## Userland Applications
 
-Zenith OS compiles userland binaries to separate flat binaries loaded from the custom disk filesystem:
+Zenith OS compiles userland applications to separate flat binaries loaded from the custom disk filesystem:
 
-### 1. Interactive Shell (`sh.bin`)
+### 1. Interactive Shell ([user/sh.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/user/sh.c))
 An interactive CLI shell exposing operating system configurations, system actions, and styling schemes.
 * **Commands**:
   * `ls`: Lists ZenithFS root files and sizes.
@@ -134,24 +134,35 @@ An interactive CLI shell exposing operating system configurations, system action
   * `shutdown`: Safe ACPI shutdown (requires root privilege).
   * `restart`: Safe hardware reboot (requires root privilege).
 
-### 2. Freestanding Calculator (`calc.bin`)
+### 2. Freestanding Calculator ([user/calc.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/user/calc.c))
 An algebraic expression parser built using the Shunting-Yard algorithm.
 * Parses operator precedence (`+`, `-`, `*`, `/`) and evaluates expressions.
 * Handles nested parentheses and spacing inputs.
 * Returns precision decimal calculations.
 
-### 3. Space Shooter Arcade Game (`blaster.bin`)
+### 3. Space Shooter Arcade Game ([user/blaster.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/user/blaster.c))
 A custom graphics-based space arcade game.
 * **Game Mechanics**: Controls a space fighter on the bottom of the console grid. Fires lasers at diving squads of alien invaders while dodging drop-bombs.
 * **Features**: Live scores, high score logging, interactive controls, and animations using bilinear scaled font sprites.
 * **Controls**: `A` (Move Left), `D` (Move Right), `Space` (Fire Laser), `Q` (Quit Game).
 
-### 4. Exploit Verification Suite (`exploit.bin`)
+### 4. Exploit Verification Suite ([user/exploit.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/user/exploit.c))
 A test suite designed to verify operating system sandboxing integrity.
 * **Verification Vectors**:
   1. *Syscall Kernel Pointer Leak*: Attempts to pass a kernel address (`0x100000`) to `SYS_WRITE`. System verifies pointers and rejects the call, printing a warning.
   2. *Direct Kernel Memory Read*: Tries to read from kernel virtual memory address `0x100000` directly. The MMU triggers a Page Fault (`#PF`), terminates the task, and returns safely to the shell.
   3. *User Stack Canary Smashing*: Intentionally overflows a local stack buffer in userland. The compiler-inserted stack canary detects modification, invokes `__stack_chk_fail`, outputs a security panic message, and halts the CPU to prevent code execution.
+
+---
+
+## Screenshots
+
+### 1. Splash Boot Screen
+<img src="assets/boot_screen.png" width="600" alt="Zenith OS Boot Screen">
+
+### 2. Interactive Terminal Shell
+<img src="assets/shell_terminal.png" width="600" alt="Zenith OS Interactive Shell">
+
 
 ---
 
@@ -193,7 +204,7 @@ ZenithOS/
 
 ## Disk Layout
 
-When running `make`, the build system creates two distinct drive files:
+When running `make` via [Makefile](file:///Users/apple/Personal_Files/Codes/ZenithOS/Makefile), the build system creates two distinct drive files:
 
 ### 1. Bootable Floppy Image (`build/zenithboot.img`)
 A standard 1.44MB floppy disk image structured sector-by-sector:
@@ -202,7 +213,7 @@ A standard 1.44MB floppy disk image structured sector-by-sector:
 * **Sector 17-250+ (LBA 16+)**: Core Kernel raw binary.
 
 ### 2. Primary Hard Disk Drive Image (`build/zenithos.zfs`)
-A hard disk drive formatted with a flat directory structure and files populated using `zfs_tool.py`:
+A hard disk drive formatted with a flat directory structure and files populated using [zfs_tool.py](file:///Users/apple/Personal_Files/Codes/ZenithOS/zfs_tool.py):
 * Maps directories to single-indirect lookup blocks.
 * Stores user executables: `sh.bin`, `hello.bin`, `calc.bin`, `blaster.bin`, `exploit.bin`.
 * Stores configuration and text files (e.g., `hello.txt`).
