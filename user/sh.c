@@ -40,6 +40,10 @@ static void print_help(void) {
     set_color(COLOR_CYAN, COLOR_DARK);
     print("  blaster            "); set_color(COLOR_GREY, COLOR_DARK); print("- Launch space invaders arcade game\n");
     set_color(COLOR_CYAN, COLOR_DARK);
+    print("  exploit            "); set_color(COLOR_GREY, COLOR_DARK); print("- Launch exploit verification suite\n");
+    set_color(COLOR_CYAN, COLOR_DARK);
+    print("  hello              "); set_color(COLOR_GREY, COLOR_DARK); print("- Launch hello world demonstration\n");
+    set_color(COLOR_CYAN, COLOR_DARK);
     print("  shutdown           "); set_color(COLOR_GREY, COLOR_DARK); print("- Power off the computer\n");
     set_color(COLOR_CYAN, COLOR_DARK);
     print("  restart            "); set_color(COLOR_GREY, COLOR_DARK); print("- Reboot the computer\n");
@@ -163,6 +167,26 @@ int main(void) {
             if (exec_res < 0) {
                 set_color(0x00FF3333, COLOR_DARK);
                 print("Error: blaster.bin not found on disk.\n");
+                set_color(COLOR_WHITE, COLOR_DARK);
+            }
+        }
+        // 8. Exploit command
+        else if (strcmp(cmd, "exploit") == 0) {
+            print("Launching exploit verification suite...\n");
+            int exec_res = exec("exploit.bin");
+            if (exec_res < 0) {
+                set_color(0x00FF3333, COLOR_DARK);
+                print("Error: exploit.bin not found on disk.\n");
+                set_color(COLOR_WHITE, COLOR_DARK);
+            }
+        }
+        // 9. Hello command
+        else if (strcmp(cmd, "hello") == 0) {
+            print("Launching hello demo...\n");
+            int exec_res = exec("hello.bin");
+            if (exec_res < 0) {
+                set_color(0x00FF3333, COLOR_DARK);
+                print("Error: hello.bin not found on disk.\n");
                 set_color(COLOR_WHITE, COLOR_DARK);
             }
         }

@@ -6,83 +6,60 @@
 
 void print(const char* str) {
     __asm__ volatile(
-        "mov $0, %%eax\n\t"     // SYS_WRITE = 0
-        "mov %0, %%ebx\n\t"     // string pointer
-        "int $0x80\n\t"
+        "int $0x80"
         :
-        : "r"(str)
-        : "eax", "ebx"
+        : "a"(0), "b"(str)
     );
 }
 
 int read(char* buf, int max_len) {
     int count;
     __asm__ volatile(
-        "mov $1, %%eax\n\t"     // SYS_READ = 1
-        "mov %1, %%ebx\n\t"     // buffer pointer
-        "mov %2, %%ecx\n\t"     // max length
-        "int $0x80\n\t"
-        "mov %%eax, %0\n\t"     // save count
-        : "=r"(count)
-        : "r"(buf), "r"(max_len)
-        : "eax", "ebx", "ecx"
+        "int $0x80"
+        : "=a"(count)
+        : "a"(1), "b"(buf), "c"(max_len)
     );
     return count;
 }
 
 void sleep(int ticks) {
     __asm__ volatile(
-        "mov $2, %%eax\n\t"     // SYS_SLEEP = 2
-        "mov %0, %%ebx\n\t"     // ticks
-        "int $0x80\n\t"
+        "int $0x80"
         :
-        : "r"(ticks)
-        : "eax", "ebx"
+        : "a"(2), "b"(ticks)
     );
 }
 
 void exit(void) {
     __asm__ volatile(
-        "mov $3, %%eax\n\t"     // SYS_EXIT = 3
-        "int $0x80\n\t"
+        "int $0x80"
         :
-        :
-        : "eax"
+        : "a"(3)
     );
 }
 
 void set_color(uint32_t fg, uint32_t bg) {
     __asm__ volatile(
-        "mov $4, %%eax\n\t"     // SYS_SET_COLOR = 4
-        "mov %0, %%ebx\n\t"     // foreground
-        "mov %1, %%ecx\n\t"     // background
-        "int $0x80\n\t"
+        "int $0x80"
         :
-        : "r"(fg), "r"(bg)
-        : "eax", "ebx", "ecx"
+        : "a"(4), "b"(fg), "c"(bg)
     );
 }
 
 void list_files(void) {
     __asm__ volatile(
-        "mov $5, %%eax\n\t"     // SYS_LIST_FILES = 5
-        "int $0x80\n\t"
+        "int $0x80"
         :
-        :
-        : "eax"
+        : "a"(5)
     );
 }
 
 int exec(const char* filename) {
     int result;
     __asm__ volatile(
-        "mov $6, %%eax\n\t"     // SYS_EXEC = 6
-        "mov %1, %%ebx\n\t"     // filename
-        "int $0x80\n\t"
-        "mov %%eax, %0\n\t"
-        : "=r"(result)
-        : "r"(filename)
-        : "eax", "ebx"
+        "int $0x80"
+        : "=a"(result)
+        : "a"(6), "b"(filename)
     );
     return result;
 }
@@ -90,25 +67,18 @@ int exec(const char* filename) {
 int read_file(const char* filename, char* buffer) {
     int result;
     __asm__ volatile(
-        "mov $7, %%eax\n\t"     // SYS_READ_FILE = 7
-        "mov %1, %%ebx\n\t"     // filename
-        "mov %2, %%ecx\n\t"     // buffer
-        "int $0x80\n\t"
-        "mov %%eax, %0\n\t"
-        : "=r"(result)
-        : "r"(filename), "r"(buffer)
-        : "eax", "ebx", "ecx"
+        "int $0x80"
+        : "=a"(result)
+        : "a"(7), "b"(filename), "c"(buffer)
     );
     return result;
 }
 
 void clear_screen(void) {
     __asm__ volatile(
-        "mov $8, %%eax\n\t"     // SYS_CLEAR = 8
-        "int $0x80\n\t"
+        "int $0x80"
         :
-        :
-        : "eax"
+        : "a"(8)
     );
 }
 
@@ -202,75 +172,56 @@ char* strtok(char* str, const char* delim) {
 }
 
 char getchar(void) {
-    char c;
+    uint32_t c;
     __asm__ volatile(
-        "mov $9, %%eax\n\t"
-        "mov $0, %%ebx\n\t"
-        "int $0x80\n\t"
-        "mov %%al, %0\n\t"
-        : "=r"(c)
-        :
-        : "eax", "ebx"
+        "int $0x80"
+        : "=a"(c)
+        : "a"(9), "b"(0)
     );
-    return c;
+    return (char)c;
 }
 
 char getchar_nonblock(void) {
-    char c;
+    uint32_t c;
     __asm__ volatile(
-        "mov $9, %%eax\n\t"
-        "mov $1, %%ebx\n\t"
-        "int $0x80\n\t"
-        "mov %%al, %0\n\t"
-        : "=r"(c)
-        :
-        : "eax", "ebx"
+        "int $0x80"
+        : "=a"(c)
+        : "a"(9), "b"(1)
     );
-    return c;
+    return (char)c;
 }
 
 void set_cursor(int col, int row) {
     __asm__ volatile(
-        "mov $10, %%eax\n\t"
-        "mov %0, %%ebx\n\t"
-        "mov %1, %%ecx\n\t"
-        "int $0x80\n\t"
+        "int $0x80"
         :
-        : "r"(col), "r"(row)
-        : "eax", "ebx", "ecx"
+        : "a"(10), "b"(col), "c"(row)
     );
 }
 
 int uptime(void) {
     int ticks;
     __asm__ volatile(
-        "mov $11, %%eax\n\t"
-        "int $0x80\n\t"
-        "mov %%eax, %0\n\t"
-        : "=r"(ticks)
-        :
-        : "eax"
+        "int $0x80"
+        : "=a"(ticks)
+        : "a"(11)
     );
     return ticks;
 }
 
 void shutdown(void) {
     __asm__ volatile(
-        "mov $12, %%eax\n\t"
-        "int $0x80\n\t"
+        "int $0x80"
         :
-        :
-        : "eax"
+        : "a"(12)
     );
 }
 
 void restart(void) {
     __asm__ volatile(
-        "mov $13, %%eax\n\t"
-        "int $0x80\n\t"
+        "int $0x80"
         :
-        :
-        : "eax"
+        : "a"(13)
     );
 }
 
@@ -322,4 +273,23 @@ char* itoa(int val, int base) {
     
     return &buf[i + 1];
 }
+
+// Userland stack protection symbols
+uint32_t __stack_chk_guard = 0x5ECA1DAE;
+
+void __attribute__((noreturn)) __stack_chk_fail(void) {
+    print("\n[USER PROCESS SECURITY ALERT] Stack Smashing/Overflow Detected! Terminating process.\n");
+    // Call SYS_EXIT (syscall index 3)
+    __asm__ volatile(
+        "mov $3, %%eax\n\t"
+        "int $0x80"
+        :
+        :
+        : "eax"
+    );
+    while (1) {
+        __asm__ volatile("hlt");
+    }
+}
+
 

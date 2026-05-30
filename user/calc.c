@@ -258,7 +258,10 @@ int main(void) {
             puts("zenith_calc> ");
         }
 
-        input(input_buf, sizeof(input_buf));
+        int input_len = input(input_buf, sizeof(input_buf));
+        if (input_len > 0 && input_buf[input_len - 1] == '\n') {
+            input_buf[input_len - 1] = '\0';
+        }
 
         char* p = input_buf;
         p = skip_spaces(p);
@@ -311,12 +314,43 @@ int main(void) {
         char* expr = p;
 
         if (is_acc) {
-            char* ans_str = itoa(last_result, 10);
-            int idx = 0;
-            while (ans_str[idx]) {
-                expr_buf[idx] = ans_str[idx];
-                idx++;
+            // Format last_result as a decimal string (e.g. 3500 -> 3.500)
+            int temp_val = last_result;
+            int is_neg = 0;
+            if (temp_val < 0) {
+                is_neg = 1;
+                temp_val = -temp_val;
             }
+            int int_part = temp_val / SCALE;
+            int frac_part = temp_val % SCALE;
+            
+            int idx = 0;
+            if (is_neg) {
+                expr_buf[idx++] = '-';
+            }
+            
+            char* int_str = itoa(int_part, 10);
+            int k = 0;
+            while (int_str[k]) {
+                expr_buf[idx++] = int_str[k++];
+            }
+            
+            expr_buf[idx++] = '.';
+            
+            // Format fractional part with leading zeros
+            if (frac_part < 10) {
+                expr_buf[idx++] = '0';
+                expr_buf[idx++] = '0';
+            } else if (frac_part < 100) {
+                expr_buf[idx++] = '0';
+            }
+            
+            char* frac_str = itoa(frac_part, 10);
+            k = 0;
+            while (frac_str[k]) {
+                expr_buf[idx++] = frac_str[k++];
+            }
+            
             int j = 0;
             while (p[j]) {
                 expr_buf[idx++] = p[j++];

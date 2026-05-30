@@ -29,6 +29,53 @@ static void* local_memcpy(void* dest, const void* src, size_t len) {
     return dest;
 }
 
+void graphics_draw_gradient(uint32_t start_color, uint32_t end_color) {
+    uint32_t width = boot_info.width;
+    uint32_t height = boot_info.height;
+    
+    // We introduce a middle color stop to make the cosmic gradient look more modern and multi-toned
+    uint32_t mid_color = 0x241435; // Vibrant Cosmic Violet-Indigo
+    
+    uint8_t r1 = (start_color >> 16) & 0xFF;
+    uint8_t g1 = (start_color >> 8) & 0xFF;
+    uint8_t b1 = start_color & 0xFF;
+    
+    uint8_t r2 = (mid_color >> 16) & 0xFF;
+    uint8_t g2 = (mid_color >> 8) & 0xFF;
+    uint8_t b2 = mid_color & 0xFF;
+    
+    uint8_t r3 = (end_color >> 16) & 0xFF;
+    uint8_t g3 = (end_color >> 8) & 0xFF;
+    uint8_t b3 = end_color & 0xFF;
+    
+    for (uint32_t y = 0; y < height; y++) {
+        uint8_t r, g, b;
+        if (y < height / 2) {
+            uint32_t dy = y * 2;
+            r = r1 + ((int32_t)(r2 - r1) * (int32_t)dy) / (int32_t)height;
+            g = g1 + ((int32_t)(g2 - g1) * (int32_t)dy) / (int32_t)height;
+            b = b1 + ((int32_t)(b2 - b1) * (int32_t)dy) / (int32_t)height;
+        } else {
+            uint32_t dy = (y - height / 2) * 2;
+            r = r2 + ((int32_t)(r3 - r2) * (int32_t)dy) / (int32_t)height;
+            g = g2 + ((int32_t)(g3 - g2) * (int32_t)dy) / (int32_t)height;
+            b = b2 + ((int32_t)(b3 - b2) * (int32_t)dy) / (int32_t)height;
+        }
+        uint32_t color = (r << 16) | (g << 8) | b;
+        
+        if (boot_info.bpp == 32) {
+            uint32_t* line_fb = (uint32_t*)(fb + y * boot_info.pitch);
+            for (uint32_t x = 0; x < width; x++) {
+                line_fb[x] = color;
+            }
+        } else {
+            for (uint32_t x = 0; x < width; x++) {
+                draw_pixel(x, y, color);
+            }
+        }
+    }
+}
+
 void graphics_init(void) {
     // Copy the BootInfo block written by Stage 2 at 0x7000
     local_memcpy(&boot_info, (const void*)0x7000, sizeof(struct BootInfo));
@@ -40,43 +87,25 @@ void graphics_init(void) {
 
 
 void graphics_draw_frame(void) {
-    // 1. Fill entire screen with desktop background (Slate Purple: 0x6E5F80)
-    graphics_clear(0x6E5F80);
+    // 1. Draw modern cosmic wallpaper gradient (Galaxy indigo to violet)
+    graphics_draw_gradient(0x070B19, 0x160A26);
     
-    // 2. Draw the console window container border.
-    // The window covers x from (MARGIN_LEFT - 4) to (width - MARGIN_RIGHT + 4)
-    // and y from (MARGIN_TOP - 24) to (height - MARGIN_BOTTOM + 4)
-    uint32_t win_x = MARGIN_LEFT - 4;
-    uint32_t win_y = MARGIN_TOP - 24;
-    uint32_t win_w = boot_info.width - MARGIN_LEFT - MARGIN_RIGHT + 8;
-    uint32_t win_h = boot_info.height - MARGIN_TOP - MARGIN_BOTTOM + 28;
+    // 2. Center console card container dimensions
+    uint32_t container_x = MARGIN_LEFT - 8;
+    uint32_t container_y = MARGIN_TOP - 8;
+    uint32_t container_w = boot_info.width - MARGIN_LEFT - MARGIN_RIGHT + 16;
+    uint32_t container_h = boot_info.height - MARGIN_TOP - MARGIN_BOTTOM + 16;
     
-    // Draw outer bevel: Top-left light gray, Bottom-right dark gray
-    draw_rect(win_x, win_y, win_w, 2, 0xCCCCCC);
-    draw_rect(win_x, win_y, 2, win_h, 0xCCCCCC);
-    draw_rect(win_x, win_y + win_h - 2, win_w, 2, 0x555555);
-    draw_rect(win_x + win_w - 2, win_y, 2, win_h, 0x555555);
+    // Draw layered Drop Shadows
+    draw_rounded_rect(container_x + 12, container_y + 12, container_w, container_h, 12, 0x030305);
+    draw_rounded_rect(container_x + 8, container_y + 8, container_w, container_h, 12, 0x050508);
+    draw_rounded_rect(container_x + 4, container_y + 4, container_w, container_h, 12, 0x08080C);
     
-    // 3. Draw Title Bar: Filled rectangle (Charcoal Black: 0x1F1F24)
-    uint32_t title_x = win_x + 2;
-    uint32_t title_y = win_y + 2;
-    uint32_t title_w = win_w - 4;
-    uint32_t title_h = 20;
-    draw_rect(title_x, title_y, title_w, title_h, 0x1F1F24);
+    // Draw main console workspace card panel (carbon base)
+    draw_rounded_rect(container_x, container_y, container_w, container_h, 12, 0x07080B);
     
-    // Draw a small decorative title border line under title bar
-    draw_rect(title_x, title_y + title_h, title_w, 1, 0x555555);
-    
-    // Draw centered title text "Zenith Operating System v1.0" in title bar
-    const char* title_text = "Zenith Operating System v1.0";
-    uint32_t text_len = 0;
-    while (title_text[text_len]) text_len++;
-    uint32_t text_x = title_x + (title_w - text_len * CHAR_WIDTH) / 2;
-    uint32_t text_y = title_y + (title_h - CHAR_HEIGHT) / 2;
-    
-    for (uint32_t i = 0; i < text_len; i++) {
-        draw_char(title_text[i], text_x + i * CHAR_WIDTH, text_y, 0xFFFFFF, 0x1F1F24);
-    }
+    // Draw subtle border around the console workspace
+    draw_rounded_rect_outline(container_x, container_y, container_w, container_h, 12, 0x2D2E3D);
 }
 
 void graphics_clear_console(void) {
@@ -114,6 +143,86 @@ void draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color) {
     }
 }
 
+void draw_circle(int xc, int yc, int r, uint32_t color) {
+    int x = 0;
+    int y = r;
+    int d = 3 - 2 * r;
+    while (y >= x) {
+        draw_pixel(xc + x, yc + y, color);
+        draw_pixel(xc - x, yc + y, color);
+        draw_pixel(xc + x, yc - y, color);
+        draw_pixel(xc - x, yc - y, color);
+        draw_pixel(xc + y, yc + x, color);
+        draw_pixel(xc - y, yc + x, color);
+        draw_pixel(xc + y, yc - x, color);
+        draw_pixel(xc - y, yc - x, color);
+        x++;
+        if (d > 0) {
+            y--;
+            d = d + 4 * (x - y) + 10;
+        } else {
+            d = d + 4 * x + 6;
+        }
+    }
+}
+
+void draw_filled_circle(int xc, int yc, int r, uint32_t color) {
+    for (int y = -r; y <= r; y++) {
+        for (int x = -r; x <= r; x++) {
+            if (x*x + y*y <= r*r) {
+                draw_pixel(xc + x, yc + y, color);
+            }
+        }
+    }
+}
+
+void draw_rounded_rect(int x, int y, int w, int h, int r, uint32_t color) {
+    if (r <= 0) {
+        draw_rect(x, y, w, h, color);
+        return;
+    }
+    if (2 * r > w) r = w / 2;
+    if (2 * r > h) r = h / 2;
+
+    draw_filled_circle(x + r, y + r, r, color);
+    draw_filled_circle(x + w - r - 1, y + r, r, color);
+    draw_filled_circle(x + r, y + h - r - 1, r, color);
+    draw_filled_circle(x + w - r - 1, y + h - r - 1, r, color);
+
+    draw_rect(x, y + r, w, h - 2 * r, color);
+    draw_rect(x + r, y, w - 2 * r, r, color);
+    draw_rect(x + r, y + h - r, w - 2 * r, r, color);
+}
+
+void draw_rounded_rect_outline(int x, int y, int w, int h, int r, uint32_t color) {
+    if (r <= 0) {
+        draw_rect(x, y, w, 1, color);
+        draw_rect(x, y + h - 1, w, 1, color);
+        draw_rect(x, y, 1, h, color);
+        draw_rect(x + w - 1, y, 1, h, color);
+        return;
+    }
+    if (2 * r > w) r = w / 2;
+    if (2 * r > h) r = h / 2;
+
+    draw_rect(x + r, y, w - 2 * r, 1, color);
+    draw_rect(x + r, y + h - 1, w - 2 * r, 1, color);
+    draw_rect(x, y + r, 1, h - 2 * r, color);
+    draw_rect(x + w - 1, y + r, 1, h - 2 * r, color);
+
+    for (int dy = 0; dy <= r; dy++) {
+        for (int dx = 0; dx <= r; dx++) {
+            int d2 = dx * dx + dy * dy;
+            if (d2 >= (r - 1) * (r - 1) && d2 <= r * r) {
+                draw_pixel(x + r - dx, y + r - dy, color);
+                draw_pixel(x + w - r - 1 + dx, y + r - dy, color);
+                draw_pixel(x + r - dx, y + h - r - 1 + dy, color);
+                draw_pixel(x + w - r - 1 + dx, y + h - r - 1 + dy, color);
+            }
+        }
+    }
+}
+
 void graphics_clear(uint32_t color) {
     if (boot_info.bpp == 32) {
         uint32_t total_pixels = boot_info.width * boot_info.height;
@@ -133,26 +242,59 @@ void graphics_clear(uint32_t color) {
 void draw_char(char c, uint32_t x, uint32_t y, uint32_t fg, uint32_t bg) {
     if ((uint8_t)c < 32 || (uint8_t)c > 127) c = 32;
     
+    uint8_t r_fg = (fg >> 16) & 0xFF;
+    uint8_t g_fg = (fg >> 8) & 0xFF;
+    uint8_t b_fg = fg & 0xFF;
+    
     for (int row = 0; row < CHAR_HEIGHT; row++) {
-        int sy = (row * 8) / CHAR_HEIGHT;
-        uint8_t bits = font_bitmap[(int)c][sy];
+        // Map row 0..CHAR_HEIGHT-1 to 0..7 range in fixed point (8.8)
+        uint32_t v_fp = (row * 7 * 256) / (CHAR_HEIGHT - 1);
+        uint32_t y_low = v_fp >> 8;
+        uint32_t y_high = y_low + 1;
+        if (y_high > 7) y_high = 7;
+        uint32_t weight_y = v_fp & 0xFF;
+        
         for (int col = 0; col < CHAR_WIDTH; col++) {
-            int sx = (col * 8) / CHAR_WIDTH;
+            // Map col 0..CHAR_WIDTH-1 to 0..7 range in fixed point (8.8)
+            uint32_t u_fp = (col * 7 * 256) / (CHAR_WIDTH - 1);
+            uint32_t x_low = u_fp >> 8;
+            uint32_t x_high = x_low + 1;
+            if (x_high > 7) x_high = 7;
+            uint32_t weight_x = u_fp & 0xFF;
             
-            // Check if current pixel is set
-            bool is_set = (bits & (0x80 >> sx)) != 0;
+            // Read 4 binary pixel values from 8x8 font bitmap
+            uint32_t val_00 = (font_bitmap[(int)c][y_low] & (0x80 >> x_low)) ? 255 : 0;
+            uint32_t val_10 = (font_bitmap[(int)c][y_low] & (0x80 >> x_high)) ? 255 : 0;
+            uint32_t val_01 = (font_bitmap[(int)c][y_high] & (0x80 >> x_low)) ? 255 : 0;
+            uint32_t val_11 = (font_bitmap[(int)c][y_high] & (0x80 >> x_high)) ? 255 : 0;
             
-            // Bold/smooth interpolation: if the next pixel is set and we're bridging a fractional gap,
-            // draw it as set. This thickens the text so it doesn't look thin or pixelated when upscaled.
-            if (!is_set && sx < 7) {
-                if ((bits & (0x80 >> (sx + 1))) != 0 && (col * 8) % CHAR_WIDTH != 0) {
-                    is_set = true;
+            // Bilinear interpolation
+            uint32_t val_0 = val_00 + (((int32_t)val_10 - (int32_t)val_00) * (int32_t)weight_x >> 8);
+            uint32_t val_1 = val_01 + (((int32_t)val_11 - (int32_t)val_01) * (int32_t)weight_x >> 8);
+            uint32_t intensity = val_0 + (((int32_t)val_1 - (int32_t)val_0) * (int32_t)weight_y >> 8);
+            
+            if (intensity > 0) {
+                uint32_t actual_bg = bg;
+                if (bg == 0xFFFFFFFF) {
+                    // Read background from framebuffer
+                    if (boot_info.bpp == 32) {
+                        actual_bg = *(volatile uint32_t*)(fb + (y + row) * boot_info.pitch + (x + col) * 4);
+                    } else {
+                        actual_bg = 0x07080B; // fallback
+                    }
                 }
-            }
-            
-            if (is_set) {
-                draw_pixel(x + col, y + row, fg);
-            } else {
+                
+                // Blend colors based on intensity
+                uint8_t r_bg = (actual_bg >> 16) & 0xFF;
+                uint8_t g_bg = (actual_bg >> 8) & 0xFF;
+                uint8_t b_bg = actual_bg & 0xFF;
+                
+                uint8_t r = r_bg + (((int32_t)r_fg - (int32_t)r_bg) * (int32_t)intensity >> 8);
+                uint8_t g = g_bg + (((int32_t)g_fg - (int32_t)g_bg) * (int32_t)intensity >> 8);
+                uint8_t b = b_bg + (((int32_t)b_fg - (int32_t)b_bg) * (int32_t)intensity >> 8);
+                
+                draw_pixel(x + col, y + row, (r << 16) | (g << 8) | b);
+            } else if (bg != 0xFFFFFFFF) {
                 draw_pixel(x + col, y + row, bg);
             }
         }
@@ -296,7 +438,7 @@ void graphics_draw_splash(void) {
     }
     
     // 3. Draw loading status box centered at y = start_y + 6 * CHAR_HEIGHT + 40
-    uint32_t box_w = 500;
+    uint32_t box_w = 600;
     uint32_t box_h = 45;
     uint32_t box_x = (boot_info.width - box_w) / 2;
     uint32_t box_y = start_y + 6 * CHAR_HEIGHT + 40;
@@ -309,13 +451,13 @@ void graphics_draw_splash(void) {
     
     graphics_update_progress("Initializing Zenith OS kernel...", 0);
 }
-
+ 
 void graphics_update_progress(const char* status, uint32_t percentage) {
-    uint32_t box_w = 500;
+    uint32_t box_w = 600;
     uint32_t box_h = 45;
     uint32_t box_x = (boot_info.width - box_w) / 2;
     uint32_t box_y = (boot_info.height / 3) + 6 * CHAR_HEIGHT + 40;
-    
+
     // Clear status text area (y = box_y - 40 to box_y - 20)
     uint32_t status_len = 0;
     while (status[status_len]) status_len++;
@@ -352,7 +494,7 @@ void graphics_update_progress(const char* status, uint32_t percentage) {
     uint32_t p_len = 0;
     while (print_str[p_len]) p_len++;
     uint32_t p_x = boot_info.width / 2 - (p_len * CHAR_WIDTH) / 2;
-    draw_rect(p_x - 10, box_y + box_h + 15, p_len * CHAR_WIDTH + 20, 20, 0x1B1822);
+    draw_rect(p_x - 20, box_y + box_h + 15, p_len * CHAR_WIDTH + 40, 20, 0x1B1822);
     for (uint32_t i = 0; i < p_len; i++) {
         draw_char(print_str[i], p_x + i * CHAR_WIDTH, box_y + box_h + 17, 0x00E5FF, 0x1B1822);
     }
@@ -373,23 +515,23 @@ static inline void outw_local(uint16_t port, uint16_t val) {
 }
 
 void graphics_draw_shutdown(void) {
-    // 1. Clear screen to dark slate purple background
-    graphics_clear(0x1B1822);
+    // 1. Clear screen to modern gradient
+    graphics_draw_gradient(0x070B19, 0x160A26);
     
-    // 2. Draw styled beveled warning box in the center
+    // 2. Draw styled box in the center
     uint32_t box_w = 600;
     uint32_t box_h = 220;
     uint32_t box_x = (boot_info.width - box_w) / 2;
     uint32_t box_y = (boot_info.height - box_h) / 2;
     
-    // Charcoal box with warning orange outline
-    draw_rect(box_x, box_y, box_w, box_h, 0x1F1F24);
+    // Drop shadow
+    draw_rounded_rect(box_x + 12, box_y + 12, box_w, box_h, 16, 0x05060A);
     
-    // Draw bevel borders (3px)
-    draw_rect(box_x, box_y, box_w, 3, 0xFF8000); // Top
-    draw_rect(box_x, box_y, 3, box_h, 0xFFFF00); // Left
-    draw_rect(box_x, box_y + box_h - 3, box_w, 3, 0xFF8000); // Bottom
-    draw_rect(box_x + box_w - 3, box_y, 3, box_h, 0xFFFFFF); // Right
+    // Charcoal box
+    draw_rounded_rect(box_x, box_y, box_w, box_h, 16, 0x12131A);
+    
+    // Warning red border (rounded)
+    draw_rounded_rect_outline(box_x, box_y, box_w, box_h, 16, 0xEF4444);
     
     // Centered messages
     const char* m1 = "ZENITH OPERATING SYSTEM";
@@ -408,9 +550,9 @@ void graphics_draw_shutdown(void) {
     uint32_t y2 = box_y + 90;
     uint32_t y3 = box_y + 140;
     
-    for (uint32_t i = 0; i < len1; i++) draw_char(m1[i], x1 + i * CHAR_WIDTH, y1, 0xFFFFFF, 0x1F1F24);
-    for (uint32_t i = 0; i < len2; i++) draw_char(m2[i], x2 + i * CHAR_WIDTH, y2, 0xFF8000, 0x1F1F24);
-    for (uint32_t i = 0; i < len3; i++) draw_char(m3[i], x3 + i * CHAR_WIDTH, y3, 0x00FF33, 0x1F1F24);
+    for (uint32_t i = 0; i < len1; i++) draw_char(m1[i], x1 + i * CHAR_WIDTH, y1, 0xE2E8F0, 0x12131A);
+    for (uint32_t i = 0; i < len2; i++) draw_char(m2[i], x2 + i * CHAR_WIDTH, y2, 0xEF4444, 0x12131A);
+    for (uint32_t i = 0; i < len3; i++) draw_char(m3[i], x3 + i * CHAR_WIDTH, y3, 0x10B981, 0x12131A);
     
     // Perform QEMU ACPI poweroff
     timer_wait(1000);
@@ -418,25 +560,25 @@ void graphics_draw_shutdown(void) {
     outw_local(0xB004, 0x2000);
     outw_local(0x4004, 0x3400);
 }
-
+ 
 void graphics_draw_restart(void) {
-    // 1. Clear screen to dark slate purple background
-    graphics_clear(0x1B1822);
+    // 1. Clear screen to modern gradient
+    graphics_draw_gradient(0x070B19, 0x160A26);
     
-    // 2. Draw styled beveled box in the center
+    // 2. Draw styled box in the center
     uint32_t box_w = 600;
     uint32_t box_h = 220;
     uint32_t box_x = (boot_info.width - box_w) / 2;
     uint32_t box_y = (boot_info.height - box_h) / 2;
     
-    // Charcoal box with system blue outline
-    draw_rect(box_x, box_y, box_w, box_h, 0x1F1F24);
+    // Drop shadow
+    draw_rounded_rect(box_x + 12, box_y + 12, box_w, box_h, 16, 0x05060A);
     
-    // Draw bevel borders (3px)
-    draw_rect(box_x, box_y, box_w, 3, 0x00E5FF); // Top
-    draw_rect(box_x, box_y, 3, box_h, 0x00E5FF); // Left
-    draw_rect(box_x, box_y + box_h - 3, box_w, 3, 0x00E5FF); // Bottom
-    draw_rect(box_x + box_w - 3, box_y, 3, box_h, 0x00E5FF); // Right
+    // Charcoal box
+    draw_rounded_rect(box_x, box_y, box_w, box_h, 16, 0x12131A);
+    
+    // System cyber cyan border (rounded)
+    draw_rounded_rect_outline(box_x, box_y, box_w, box_h, 16, 0x00E5FF);
     
     // Centered messages
     const char* m1 = "ZENITH OPERATING SYSTEM";
@@ -455,9 +597,9 @@ void graphics_draw_restart(void) {
     uint32_t y2 = box_y + 90;
     uint32_t y3 = box_y + 140;
     
-    for (uint32_t i = 0; i < len1; i++) draw_char(m1[i], x1 + i * CHAR_WIDTH, y1, 0xFFFFFF, 0x1F1F24);
-    for (uint32_t i = 0; i < len2; i++) draw_char(m2[i], x2 + i * CHAR_WIDTH, y2, 0x00E5FF, 0x1F1F24);
-    for (uint32_t i = 0; i < len3; i++) draw_char(m3[i], x3 + i * CHAR_WIDTH, y3, 0xE0E0E0, 0x1F1F24);
+    for (uint32_t i = 0; i < len1; i++) draw_char(m1[i], x1 + i * CHAR_WIDTH, y1, 0xE2E8F0, 0x12131A);
+    for (uint32_t i = 0; i < len2; i++) draw_char(m2[i], x2 + i * CHAR_WIDTH, y2, 0x00E5FF, 0x12131A);
+    for (uint32_t i = 0; i < len3; i++) draw_char(m3[i], x3 + i * CHAR_WIDTH, y3, 0xE0E0E0, 0x12131A);
     
     // Reboot via 8042 Keyboard Controller
     timer_wait(1000);

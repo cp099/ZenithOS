@@ -153,14 +153,16 @@ static void syscall_handler(registers_t* regs) {
                     // Clear the old user space pages/tables to prevent leaks
                     vmm_clear_user_space((uint32_t*)cur->cr3);
                     
-                    // Map new program pages in the process's page directory
-                    for (uint32_t addr = 0x40000000; addr < 0x40000000 + (uint32_t)size; addr += 4096) {
+                    // Map new program pages in the process's page directory (with 16KB extra for BSS/padding safety)
+                    uint32_t mem_size = (uint32_t)size + 16384;
+                    for (uint32_t addr = 0x40000000; addr < 0x40000000 + mem_size; addr += 4096) {
                         vmm_map_page_in_dir((uint32_t*)cur->cr3, addr, pmm_alloc_frame(), PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
                     }
                     
-                    // Map a private user stack page (from 0x400FF000 to 0x40100000)
-                    uint32_t user_stack_phys = pmm_alloc_frame();
-                    vmm_map_page_in_dir((uint32_t*)cur->cr3, 0x400FF000, user_stack_phys, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+                    // Map a private user stack page range (from 0x400F8000 to 0x40100000, 32KB = 8 pages)
+                    for (uint32_t addr = 0x400F8000; addr < 0x40100000; addr += 4096) {
+                        vmm_map_page_in_dir((uint32_t*)cur->cr3, addr, pmm_alloc_frame(), PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+                    }
 
                     // Switch CPU's CR3 register to the process directory context
                     __asm__ volatile("mov %0, %%cr3" : : "r"(cur->cr3));
@@ -169,6 +171,25 @@ static void syscall_handler(registers_t* regs) {
                     for (int i = 0; i < size; i++) {
                         ((uint8_t*)0x40000000)[i] = exec_buf[i];
                     }
+                    
+                    // Zero out the rest of user space memory segment (BSS + padding)
+                    for (uint32_t i = size; i < mem_size; i++) {
+                        ((uint8_t*)0x40000000)[i] = 0;
+                    }
+                    
+                    // Zero out stack memory to prevent garbage access and leak vulnerabilities
+                    for (uint32_t i = 0; i < 32768; i++) {
+                        ((uint8_t*)0x400F8000)[i] = 0;
+                    }
+
+                    // Log execution event to serial port
+                    serial_print("  [+] SYS_EXEC: Launched ");
+                    serial_print(local_filename);
+                    serial_print(" (File size: ");
+                    serial_print_hex(size);
+                    serial_print(" bytes, Memory mapped: ");
+                    serial_print_hex(mem_size);
+                    serial_print(" bytes)\n");
                     
                     // Drop privileges: any spawned program drops from Root (0) to User (1000)
                     cur->uid = 1000;

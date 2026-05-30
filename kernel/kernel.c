@@ -197,14 +197,16 @@ __attribute__((section(".text.boot"))) void kernel_main(void) {
         // Update current task CR3 tracking
         get_current_task()->cr3 = (uint32_t)process_dir;
 
-        // Map user pages starting at 0x40000000 in the private directory
-        for (uint32_t addr = 0x40000000; addr < 0x40000000 + (uint32_t)size; addr += 4096) {
+        // Map user pages starting at 0x40000000 in the private directory (with 16KB extra for BSS/padding)
+        uint32_t mem_size = (uint32_t)size + 16384;
+        for (uint32_t addr = 0x40000000; addr < 0x40000000 + mem_size; addr += 4096) {
             vmm_map_page_in_dir(process_dir, addr, pmm_alloc_frame(), PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
         }
 
-        // Allocate and map user stack page (from 0x400FF000 to 0x40100000)
-        uint32_t user_stack_phys = pmm_alloc_frame();
-        vmm_map_page_in_dir(process_dir, 0x400FF000, user_stack_phys, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+        // Allocate and map user stack pages (from 0x400F8000 to 0x40100000, 32KB = 8 pages)
+        for (uint32_t addr = 0x400F8000; addr < 0x40100000; addr += 4096) {
+            vmm_map_page_in_dir(process_dir, addr, pmm_alloc_frame(), PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+        }
 
         // Switch to the process's page directory before copying code
         __asm__ volatile("mov %0, %%cr3" : : "r"(process_dir));
@@ -212,6 +214,16 @@ __attribute__((section(".text.boot"))) void kernel_main(void) {
         // Copy shell code to user virtual memory base (which now resolves via process_dir)
         for (int i = 0; i < size; i++) {
             ((uint8_t*)0x40000000)[i] = exec_buf[i];
+        }
+
+        // Zero out the rest of user space memory segment (BSS + padding)
+        for (uint32_t i = size; i < mem_size; i++) {
+            ((uint8_t*)0x40000000)[i] = 0;
+        }
+
+        // Zero out stack memory to prevent garbage access and leak vulnerabilities
+        for (uint32_t i = 0; i < 32768; i++) {
+            ((uint8_t*)0x400F8000)[i] = 0;
         }
         
         serial_print("  [+] Code at 0x40000000: ");
@@ -230,9 +242,10 @@ __attribute__((section(".text.boot"))) void kernel_main(void) {
     } else {
         serial_print("  [-] Warning: 'sh.bin' not found on ZenithFS. Falling back to internal user program...\n");
         
-        // Map user stack page in master page directory
-        uint32_t user_stack_phys = pmm_alloc_frame();
-        vmm_map_page(0x400FF000, user_stack_phys, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+        // Map user stack pages in master page directory (from 0x400F8000 to 0x40100000, 32KB)
+        for (uint32_t addr = 0x400F8000; addr < 0x40100000; addr += 4096) {
+            vmm_map_page(addr, pmm_alloc_frame(), PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+        }
         
         // Make the kernel code page containing user_program user-accessible for the fallback
         uint32_t prog_page = (uint32_t)user_program & 0xFFFFF000;

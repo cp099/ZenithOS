@@ -7,10 +7,10 @@
 #define CHAR_WIDTH    12
 #define CHAR_HEIGHT   24
 
-#define MARGIN_LEFT   40
-#define MARGIN_TOP    40
-#define MARGIN_RIGHT  40
-#define MARGIN_BOTTOM 24
+#define MARGIN_LEFT   48
+#define MARGIN_TOP    48
+#define MARGIN_RIGHT  48
+#define MARGIN_BOTTOM 48
 
 struct BootInfo {
     uint32_t framebuffer;
@@ -24,6 +24,10 @@ void graphics_init(void);
 void graphics_set_default_colors(uint32_t fg, uint32_t bg);
 void draw_pixel(uint32_t x, uint32_t y, uint32_t color);
 void draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color);
+void draw_circle(int xc, int yc, int r, uint32_t color);
+void draw_filled_circle(int xc, int yc, int r, uint32_t color);
+void draw_rounded_rect(int x, int y, int w, int h, int r, uint32_t color);
+void draw_rounded_rect_outline(int x, int y, int w, int h, int r, uint32_t color);
 void graphics_clear(uint32_t color);
 void draw_char(char c, uint32_t x, uint32_t y, uint32_t fg, uint32_t bg);
 void print_string(const char* str, uint32_t fg, uint32_t bg);
