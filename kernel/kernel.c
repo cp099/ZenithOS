@@ -85,7 +85,7 @@ __attribute__((section(".text.boot"))) void kernel_main(void) {
     // Initialize serial port first for logging
     serial_init();
     serial_print("\n==================================================\n");
-    serial_print("          ZenithOS Core Kernel Serial Log         \n");
+    serial_print("          Zenith OS Core Kernel Serial Log        \n");
     serial_print("==================================================\n");
 
     // Copy and inspect BootInfo written by Stage 2

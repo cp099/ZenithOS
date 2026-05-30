@@ -1,11 +1,11 @@
 # Zenith OS
 
 ```text
- ZZZZZZ  EEEEEE  NN  NN  IIIIII  TTTTTT  HH  HH        OOOO    SSSS 
-     ZZ  EE      NNN NN    II      TT    HH  HH       OO  OO  SS    
-   ZZZ   EEEE    ######    II      TT    ######       OO  OO   SSSS 
-  ZZ     EE      NN ###    II      TT    HH  HH       OO  OO      SS
- ZZZZZZ  EEEEEE  NN  NN  IIIIII    TT    HH  HH        OOOO    SSSS 
+ZZZZZZZZ   eeee           ii    tt   hh             OOOO    SSSS  
+     ZZ   ee  ee   nnnn        tttttt  hh       OO  OO   SS     
+   ZZ     eeeeee   nn  nn   ii    tt    hhhhhh      OO  OO    SSSS  
+  ZZ      ee       nn  nn   ii    tt    hh  hh      OO  OO       SS 
+ZZZZZZZZ   eeeee   nn  nn   ii     ttt  hh  hh       OOOO    SSSS  
 ```
 
 Zenith OS is a lightweight, high-resolution x86 hobby operating system designed with premium retro aesthetics, dynamic window framing, visual loading delays, single-indirect filesystem support, and customized Ring 3 userland processes.
@@ -65,10 +65,10 @@ Zenith OS compiles userland binaries to separate flat binaries loaded from the c
 ## Screenshots
 
 ### 1. Splash Boot Screen
-<img src="assets/boot_screen.png" width="500" alt="ZenithOS Boot Screen">
+<img src="assets/boot_screen.png" width="500" alt="Zenith OS Boot Screen">
 
 ### 2. Interactive Terminal Shell
-<img src="assets/shell_terminal.png" width="500" alt="ZenithOS Interactive Shell">
+<img src="assets/shell_terminal.png" width="500" alt="Zenith OS Interactive Shell">
 
 ---
 

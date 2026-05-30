@@ -15,7 +15,7 @@
 static void print_banner(void) {
     set_color(COLOR_PURPLE, COLOR_DARK);
     print("========================================================================\n");
-    print("                      ZenithOS Interactive User Shell                   \n");
+    print("                      Zenith OS Interactive User Shell                  \n");
     print("========================================================================\n");
     set_color(COLOR_CYAN, COLOR_DARK);
     print("  Type 'help' to list built-in commands or enter an executable name.\n\n");
@@ -24,7 +24,7 @@ static void print_banner(void) {
 
 static void print_help(void) {
     set_color(COLOR_YELLOW, COLOR_DARK);
-    print("ZenithOS Shell Help Commands:\n");
+    print("Zenith OS Shell Help Commands:\n");
     set_color(COLOR_CYAN, COLOR_DARK);
     print("  help               "); set_color(COLOR_GREY, COLOR_DARK); print("- Display this help info\n");
     set_color(COLOR_CYAN, COLOR_DARK);

@@ -277,14 +277,14 @@ void graphics_draw_splash(void) {
     
     // 2. Draw styled ASCII Logo centered at y = boot_info.height / 3
     uint32_t start_y = boot_info.height / 3;
-    uint32_t start_x = (boot_info.width - 64 * CHAR_WIDTH) / 2;
+    uint32_t start_x = (boot_info.width - 72 * CHAR_WIDTH) / 2;
     
     const char* logo[] = {
-        " ZZZZZZ  EEEEEE  NN  NN  IIIIII  TTTTTT  HH  HH    OOOO    SSSS ",
-        "     ZZ  EE      NNN NN    II      TT    HH  HH   OO  OO  SS    ",
-        "   ZZZ   EEEE    ######    II      TT    ######   OO  OO   SSSS ",
-        "  ZZ     EE      NN ###    II      TT    HH  HH   OO  OO      SS",
-        " ZZZZZZ  EEEEEE  NN  NN  IIIIII    TT    HH  HH    OOOO    SSSS "
+        "ZZZZZZZZ   eeee           ii    tt   hh             OOOO    SSSS  ",
+        "     ZZ   ee  ee   nnnn        tttttt  hh       OO  OO   SS     ",
+        "   ZZ     eeeeee   nn  nn   ii    tt    hhhhhh      OO  OO    SSSS  ",
+        "  ZZ      ee       nn  nn   ii    tt    hh  hh      OO  OO       SS ",
+        "ZZZZZZZZ   eeeee   nn  nn   ii     ttt  hh  hh       OOOO    SSSS  "
     };
     
     for (int r = 0; r < 5; r++) {
@@ -307,7 +307,7 @@ void graphics_draw_splash(void) {
     draw_rect(box_x, box_y + box_h - 2, box_w, 2, 0x44414D);
     draw_rect(box_x + box_w - 2, box_y, 2, box_h, 0x44414D);
     
-    graphics_update_progress("Initializing ZenithOS kernel...", 0);
+    graphics_update_progress("Initializing Zenith OS kernel...", 0);
 }
 
 void graphics_update_progress(const char* status, uint32_t percentage) {

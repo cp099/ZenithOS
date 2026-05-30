@@ -85,9 +85,9 @@ disk_read:
 ; ------------------------------------------
 
 BOOT_DRIVE      db 0
-GREETING_MSG    db "ZenithOS: Loading Stage 1...", 0x0D, 0x0A, 0
-JUMPING_MSG     db "ZenithOS: Booting Stage 2...", 0x0D, 0x0A, 0
-ERROR_MSG       db "ZenithOS: Disk Read Error!", 0x0D, 0x0A, 0
+GREETING_MSG    db "Zenith OS: Loading Stage 1...", 0x0D, 0x0A, 0
+JUMPING_MSG     db "Zenith OS: Booting Stage 2...", 0x0D, 0x0A, 0
+ERROR_MSG       db "Zenith OS: Disk Read Error!", 0x0D, 0x0A, 0
 
 ; ------------------------------------------
 ; Padding and Signature

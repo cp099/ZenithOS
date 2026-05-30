@@ -226,10 +226,10 @@ int expression(char** p) {
 void print_help() {
     puts("+----------------------------------------------+\n");
     puts("|                 ZENITH_CALC                  |\n");
-    puts("|      Interactive Calculator for ZenithOS     |\n");
+    puts("|      Interactive Calculator for Zenith OS    |\n");
     puts("+----------------------------------------------+\n");
     puts("Commands:\n");
-    puts("  exit / quit       - Return to ZenithOS shell\n");
+    puts("  exit / quit       - Return to Zenith OS shell\n");
     puts("  clear             - Clear the screen\n");
     puts("  help              - Show this instruction card\n\n");
     puts("Operations:\n");

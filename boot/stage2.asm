@@ -242,13 +242,13 @@ a20_wait_ready:
 ; ------------------------------------------
 
 BOOT_DRIVE      db 0
-STAGE2_MSG      db "ZenithOS: Stage 2 running in Real Mode.", 0x0D, 0x0A, 0
-LOAD_KERNEL_MSG db "ZenithOS: Loading kernel binary from floppy...", 0x0D, 0x0A, 0
-DISK_ERR_MSG    db "ZenithOS: Disk read error during kernel load!", 0x0D, 0x0A, 0
-A20_MSG         db "ZenithOS: Enabling A20 gate...", 0x0D, 0x0A, 0
-VESA_MSG        db "ZenithOS: Querying and setting VESA VBE 1280x1024...", 0x0D, 0x0A, 0
-VESA_ERR_MSG    db "ZenithOS: Failed to set VESA VBE mode!", 0x0D, 0x0A, 0
-PM_MSG          db "ZenithOS: Entering 32-bit Protected Mode...", 0x0D, 0x0A, 0
+STAGE2_MSG      db "Zenith OS: Stage 2 running in Real Mode.", 0x0D, 0x0A, 0
+LOAD_KERNEL_MSG db "Zenith OS: Loading kernel binary from floppy...", 0x0D, 0x0A, 0
+DISK_ERR_MSG    db "Zenith OS: Disk read error during kernel load!", 0x0D, 0x0A, 0
+A20_MSG         db "Zenith OS: Enabling A20 gate...", 0x0D, 0x0A, 0
+VESA_MSG        db "Zenith OS: Querying and setting VESA VBE 1280x1024...", 0x0D, 0x0A, 0
+VESA_ERR_MSG    db "Zenith OS: Failed to set VESA VBE mode!", 0x0D, 0x0A, 0
+PM_MSG          db "Zenith OS: Entering 32-bit Protected Mode...", 0x0D, 0x0A, 0
 
 ; ------------------------------------------
 ; Global Descriptor Table (GDT)
