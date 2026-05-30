@@ -2,6 +2,8 @@
 #include "idt.h"
 #include <stddef.h>
 
+#include "task.h"
+
 static uint32_t system_ticks = 0;
 
 // Port output helper
@@ -13,6 +15,8 @@ static inline void outb(uint16_t port, uint8_t val) {
 static void timer_callback(registers_t* regs) {
     (void)regs;
     system_ticks++;
+    scheduler_tick();
+    scheduler_yield();
 }
 
 void timer_init(uint32_t frequency) {

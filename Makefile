@@ -37,6 +37,8 @@ KERNEL_OBJS = $(BUILD_DIR)/kernel.o \
               $(BUILD_DIR)/paging.o \
               $(BUILD_DIR)/ata.o \
               $(BUILD_DIR)/zenithfs.o \
+              $(BUILD_DIR)/heap.o \
+              $(BUILD_DIR)/task.o \
               $(BUILD_DIR)/syscall.o
 
 .PHONY: all clean run

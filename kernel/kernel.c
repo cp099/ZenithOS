@@ -12,6 +12,8 @@
 #include "ata.h"
 #include "zenithfs.h"
 #include "syscall.h"
+#include "heap.h"
+#include "task.h"
 #include <stddef.h>
 #include <stdbool.h>
 
@@ -78,6 +80,14 @@ static void boot_delay(void) {
     for (volatile int d = 0; d < 12000000; d++);
 }
 
+static void test_task(void) {
+    while (1) {
+        serial_print("  [TASK] Periodic kernel background thread heartbeat...\n");
+        for (volatile int i = 0; i < 5000000; i++);
+        scheduler_yield();
+    }
+}
+
 // --------------------------------------------------------------------------
 // Kernel Main Entry Point
 // --------------------------------------------------------------------------
@@ -124,6 +134,14 @@ __attribute__((section(".text.boot"))) void kernel_main(void) {
     serial_print("[+] Enabling Paging VMM/PMM...\n");
     graphics_update_progress("Enabling CPU Two-Level Paging (128MB identity mapped)...", 45);
     paging_init();
+    boot_delay();
+
+    // 4.5 Initialize kernel heap and multitasking scheduler
+    serial_print("[+] Initializing Kernel Heap & Scheduler...\n");
+    graphics_update_progress("Initializing Kernel Heap & Task Scheduler...", 50);
+    heap_init();
+    scheduler_init();
+    task_create(test_task, 0);
     boot_delay();
     
     // 5. Initialize timer interrupts (PIT at 100Hz)

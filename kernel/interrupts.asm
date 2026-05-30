@@ -127,3 +127,22 @@ isr128:
     push byte 0             ; Dummy error code
     push 128                ; Interrupt number
     jmp isr_common_stub
+
+; 4. Task Context Switcher
+global switch_context
+switch_context:
+    push ebp
+    push ebx
+    push esi
+    push edi
+    
+    mov eax, [esp + 20]
+    mov [eax], esp        ; Save current ESP to *old_esp
+    
+    mov esp, [esp + 24]   ; Load new ESP
+    
+    pop edi
+    pop esi
+    pop ebx
+    pop ebp
+    ret
