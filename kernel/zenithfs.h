@@ -52,6 +52,9 @@ bool zenithfs_mount(void);
 // Read entire file content into buffer (returns bytes read, or -1 on error)
 int32_t zenithfs_read_file(const char* filename, uint8_t* buffer);
 
+// Get size of a file in bytes (returns size, or -1 on error)
+int32_t zenithfs_get_file_size(const char* filename);
+
 // Print all filenames in root directory to console
 void zenithfs_list_directory(void);
 

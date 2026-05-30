@@ -248,3 +248,40 @@ int32_t zenithfs_read_file(const char* filename, uint8_t* buffer) {
     return bytes_read;
 }
 
+int32_t zenithfs_get_file_size(const char* filename) {
+    if (!mounted) return -1;
+    
+    zfs_inode_t root_inode;
+    if (!read_inode(0, &root_inode)) return -1;
+    
+    uint8_t sector_buf[512];
+    uint32_t target_inode_num = 0xFFFFFFFF;
+    
+    // 1. Search directory entries for filename
+    for (uint32_t i = 0; i < 12; i++) {
+        if (root_inode.direct[i] == 0) break;
+        
+        ata_read_sectors(root_inode.direct[i], 1, sector_buf);
+        zfs_dirent_t* dirents = (zfs_dirent_t*)sector_buf;
+        
+        for (int d = 0; d < 8; d++) {
+            if (dirents[d].inode_num != 0 && local_strcmp(dirents[d].name, filename) == 0) {
+                target_inode_num = dirents[d].inode_num;
+                break;
+            }
+        }
+        if (target_inode_num != 0xFFFFFFFF) break;
+    }
+    
+    if (target_inode_num == 0xFFFFFFFF) {
+        return -1; // File not found
+    }
+    
+    // 2. Read file inode
+    zfs_inode_t file_inode;
+    if (!read_inode(target_inode_num, &file_inode)) return -1;
+    
+    return (int32_t)file_inode.size;
+}
+
+

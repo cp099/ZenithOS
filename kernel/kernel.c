@@ -161,6 +161,10 @@ __attribute__((section(".text.boot"))) void kernel_main(void) {
     __asm__ volatile("sti");
     timer_wait(35);
     
+    // Randomize kernel stack guard using PIT timer ticks and memory layout entropy
+    extern uint32_t __stack_chk_guard;
+    __stack_chk_guard = 0xDEADC0DE ^ get_ticks() ^ (uint32_t)&__stack_chk_guard;
+    
     // 8. Probe storage and mount custom ZenithFS filesystem
     serial_print("[+] Probing storage and mounting ZenithFS...\n");
     graphics_update_progress("Detecting Hard Drive and mounting ZenithFS...", 85);
@@ -185,13 +189,25 @@ __attribute__((section(".text.boot"))) void kernel_main(void) {
 
     int32_t size = zenithfs_read_file("sh.bin", exec_buf);
     if (size > 0) {
-        serial_print("  [+] Loaded sh.bin from disk. Mapping user space pages...\n");
-        // Map user pages starting at 0x40000000
+        serial_print("  [+] Loaded sh.bin from disk. Creating private page directory...\n");
+        uint32_t* process_dir = (uint32_t*)vmm_create_page_dir();
+        
+        // Update current task CR3 tracking
+        get_current_task()->cr3 = (uint32_t)process_dir;
+
+        // Map user pages starting at 0x40000000 in the private directory
         for (uint32_t addr = 0x40000000; addr < 0x40000000 + (uint32_t)size; addr += 4096) {
-            vmm_map_page(addr, pmm_alloc_frame(), PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+            vmm_map_page_in_dir(process_dir, addr, pmm_alloc_frame(), PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
         }
 
-        // Copy shell code to user virtual memory base
+        // Allocate and map user stack page (from 0x400FF000 to 0x40100000)
+        uint32_t user_stack_phys = pmm_alloc_frame();
+        vmm_map_page_in_dir(process_dir, 0x400FF000, user_stack_phys, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+
+        // Switch to the process's page directory before copying code
+        __asm__ volatile("mov %0, %%cr3" : : "r"(process_dir));
+
+        // Copy shell code to user virtual memory base (which now resolves via process_dir)
         for (int i = 0; i < size; i++) {
             ((uint8_t*)0x40000000)[i] = exec_buf[i];
         }
@@ -208,15 +224,23 @@ __attribute__((section(".text.boot"))) void kernel_main(void) {
         graphics_clear_console();
         
         serial_print("  [+] Swapping CPU context to sh.bin in Ring 3...\n");
-        enter_ring3(0x40000000, 0x80000);
+        enter_ring3(0x40000000, 0x40100000);
     } else {
         serial_print("  [-] Warning: 'sh.bin' not found on ZenithFS. Falling back to internal user program...\n");
+        
+        // Map user stack page in master page directory
+        uint32_t user_stack_phys = pmm_alloc_frame();
+        vmm_map_page(0x400FF000, user_stack_phys, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+        
+        // Make the kernel code page containing user_program user-accessible for the fallback
+        uint32_t prog_page = (uint32_t)user_program & 0xFFFFF000;
+        vmm_map_page(prog_page, prog_page, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
         
         // Draw the window manager frame and console workspace
         graphics_draw_frame();
         graphics_clear_console();
         
-        enter_ring3((uint32_t)user_program, 0x80000);
+        enter_ring3((uint32_t)user_program, 0x40100000);
     }
     
     // Should never be reached as iret switches code flow
@@ -327,3 +351,16 @@ static void enter_ring3(uint32_t entry_point, uint32_t user_stack) {
         : "eax", "memory"
     );
 }
+
+// Stack protector guard symbols
+uint32_t __stack_chk_guard = 0xDEADC0DE;
+
+void __attribute__((noreturn)) __stack_chk_fail(void) {
+    serial_print("\n[CRITICAL SECURITY ALERT] Stack Smashing/Overflow Detected! System halted.\n");
+    print_string_default("\n[SECURITY PANIC] STACK CORRUPTION DETECTED!\n");
+    while (1) {
+        __asm__ volatile("cli\n\t"
+                         "hlt");
+    }
+}
+

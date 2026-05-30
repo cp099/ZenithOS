@@ -4,6 +4,7 @@
 #include "timer.h"
 #include "zenithfs.h"
 #include "paging.h"
+#include "task.h"
 #include <stddef.h>
 
 extern void serial_print(const char* str);
@@ -14,13 +15,9 @@ bool syscall_verify_pointer(const void* ptr, uint32_t size) {
     uint32_t start = (uint32_t)ptr;
     uint32_t end = start + size;
     
-    // Identity-mapped kernel/stack space (0 to 128MB)
-    if (end <= 0x8000000) {
-        return true;
-    }
-    
-    // User virtual space (1GB to 1GB + 128MB)
-    if (start >= 0x40000000 && end <= 0x48000000) {
+    // Strict User virtual space check (1GB to 1GB + 128MB)
+    // Ensures pointers do not point to kernel space (under 1GB) and handle overflow/wrap-around.
+    if (start >= 0x40000000 && end <= 0x48000000 && end >= start) {
         return true;
     }
     
@@ -124,10 +121,16 @@ static void syscall_handler(registers_t* regs) {
 
         case SYS_EXEC: {
             const char* filename = (const char*)regs->ebx;
+            char local_filename[256];
             uint32_t len = 0;
             if (filename != NULL) {
-                while (filename[len] != '\0' && len < 256) len++;
+                // Copy character-by-character immediately to prevent TOCTOU/double-fetch
+                while (filename[len] != '\0' && len < 255) {
+                    local_filename[len] = filename[len];
+                    len++;
+                }
             }
+            local_filename[len] = '\0';
             
             if (filename == NULL || !syscall_verify_pointer(filename, len + 1)) {
                 print_string_default("\n[SYSCALL ERROR] Access Violation: Invalid pointer passed to SYS_EXEC!\n");
@@ -135,24 +138,44 @@ static void syscall_handler(registers_t* regs) {
             } else {
                 // Buffer at 8MB is safe (below PMM start at 16MB)
                 uint8_t* exec_buf = (uint8_t*)0x800000;
-                int32_t size = zenithfs_read_file(filename, exec_buf);
+                int32_t size = zenithfs_read_file(local_filename, exec_buf);
 
                 if (size <= 0) {
                     regs->eax = -1; // File not found
                 } else {
-                    // Map pages starting at 0x40000000 (Ring 3 Userland base)
-                    for (uint32_t addr = 0x40000000; addr < 0x40000000 + (uint32_t)size; addr += 4096) {
-                        vmm_map_page(addr, pmm_alloc_frame(), PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+                    Task* cur = get_current_task();
+                    
+                    // Create private page directory if the task currently shares the kernel directory
+                    if (cur->cr3 == vmm_get_kernel_page_dir()) {
+                        cur->cr3 = vmm_create_page_dir();
                     }
+                    
+                    // Clear the old user space pages/tables to prevent leaks
+                    vmm_clear_user_space((uint32_t*)cur->cr3);
+                    
+                    // Map new program pages in the process's page directory
+                    for (uint32_t addr = 0x40000000; addr < 0x40000000 + (uint32_t)size; addr += 4096) {
+                        vmm_map_page_in_dir((uint32_t*)cur->cr3, addr, pmm_alloc_frame(), PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+                    }
+                    
+                    // Map a private user stack page (from 0x400FF000 to 0x40100000)
+                    uint32_t user_stack_phys = pmm_alloc_frame();
+                    vmm_map_page_in_dir((uint32_t*)cur->cr3, 0x400FF000, user_stack_phys, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+
+                    // Switch CPU's CR3 register to the process directory context
+                    __asm__ volatile("mov %0, %%cr3" : : "r"(cur->cr3));
 
                     // Copy code into mapped user virtual space 0x40000000
                     for (int i = 0; i < size; i++) {
                         ((uint8_t*)0x40000000)[i] = exec_buf[i];
                     }
                     
-                    // Reset registers to execution entry point (0x40000000) and stack (0x80000)
+                    // Drop privileges: any spawned program drops from Root (0) to User (1000)
+                    cur->uid = 1000;
+                    
+                    // Reset registers to execution entry point (0x40000000) and stack top (0x40100000)
                     regs->eip = 0x40000000;
-                    regs->useresp = 0x80000;
+                    regs->useresp = 0x40100000;
                     regs->eax = 0; // Success
                 }
             }
@@ -163,17 +186,30 @@ static void syscall_handler(registers_t* regs) {
             const char* filename = (const char*)regs->ebx;
             uint8_t* buffer = (uint8_t*)regs->ecx;
             
+            char local_filename[256];
             uint32_t len = 0;
             if (filename != NULL) {
-                while (filename[len] != '\0' && len < 256) len++;
+                while (filename[len] != '\0' && len < 255) {
+                    local_filename[len] = filename[len];
+                    len++;
+                }
             }
+            local_filename[len] = '\0';
             
             if (filename == NULL || !syscall_verify_pointer(filename, len + 1) || buffer == NULL) {
                 print_string_default("\n[SYSCALL ERROR] Access Violation: Invalid pointer passed to SYS_READ_FILE!\n");
                 regs->eax = -1;
             } else {
-                int32_t size = zenithfs_read_file(filename, buffer);
-                regs->eax = size;
+                int32_t file_size = zenithfs_get_file_size(local_filename);
+                if (file_size < 0) {
+                    regs->eax = -1; // File not found
+                } else if (!syscall_verify_pointer(buffer, file_size)) {
+                    print_string_default("\n[SYSCALL ERROR] Access Violation: Target buffer bounds exceed User Space!\n");
+                    regs->eax = -1;
+                } else {
+                    int32_t size = zenithfs_read_file(local_filename, buffer);
+                    regs->eax = size;
+                }
             }
             break;
         }
@@ -213,14 +249,24 @@ static void syscall_handler(registers_t* regs) {
         }
 
         case SYS_SHUTDOWN: {
-            graphics_draw_shutdown();
-            regs->eax = 0;
+            if (get_current_task()->uid != 0) {
+                print_string_default("\n[SECURITY ERROR] Access Denied: Privilege SYS_SHUTDOWN required!\n");
+                regs->eax = -1;
+            } else {
+                graphics_draw_shutdown();
+                regs->eax = 0;
+            }
             break;
         }
-
+ 
         case SYS_REBOOT: {
-            graphics_draw_restart();
-            regs->eax = 0;
+            if (get_current_task()->uid != 0) {
+                print_string_default("\n[SECURITY ERROR] Access Denied: Privilege SYS_REBOOT required!\n");
+                regs->eax = -1;
+            } else {
+                graphics_draw_restart();
+                regs->eax = 0;
+            }
             break;
         }
 

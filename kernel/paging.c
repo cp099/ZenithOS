@@ -60,14 +60,14 @@ void pmm_free_frame(uint32_t frame_phys) {
     }
 }
 
-// Map a page virtual to physical in the directory
-void vmm_map_page(uint32_t virt_addr, uint32_t phys_addr, uint32_t flags) {
+// Map a page virtual to physical in a specific directory
+void vmm_map_page_in_dir(uint32_t* dir, uint32_t virt_addr, uint32_t phys_addr, uint32_t flags) {
     uint32_t dir_idx = virt_addr >> 22;
     uint32_t tbl_idx = (virt_addr >> 12) & 0x3FF;
     
     // Check if page table is present in the directory
-    if (!(page_directory[dir_idx] & PAGE_PRESENT)) {
-        // Allocate a page table from physical memory (will be inside identity mapped 16MB)
+    if (!(dir[dir_idx] & PAGE_PRESENT)) {
+        // Allocate a page table from physical memory
         uint32_t pt_phys = pmm_alloc_frame();
         uint32_t* pt_virt = (uint32_t*)pt_phys;
         
@@ -76,15 +76,57 @@ void vmm_map_page(uint32_t virt_addr, uint32_t phys_addr, uint32_t flags) {
             pt_virt[i] = 0;
         }
         
-        // Link page table in directory
-        page_directory[dir_idx] = pt_phys | PAGE_PRESENT | PAGE_WRITE | flags;
+        // Link page table in directory (User flag is set if mapped page requires it)
+        dir[dir_idx] = pt_phys | PAGE_PRESENT | PAGE_WRITE | (flags & PAGE_USER);
     }
     
     // Extract physical address of the page table
-    uint32_t* page_table = (uint32_t*)(page_directory[dir_idx] & 0xFFFFF000);
+    uint32_t* page_table = (uint32_t*)(dir[dir_idx] & 0xFFFFF000);
     
     // Set page table entry
     page_table[tbl_idx] = (phys_addr & 0xFFFFF000) | PAGE_PRESENT | PAGE_WRITE | flags;
+}
+
+// Map a page virtual to physical in the active directory
+void vmm_map_page(uint32_t virt_addr, uint32_t phys_addr, uint32_t flags) {
+    vmm_map_page_in_dir(page_directory, virt_addr, phys_addr, flags);
+}
+
+// Create a new private page directory and copy kernel space mappings
+uint32_t vmm_create_page_dir(void) {
+    uint32_t* new_dir = (uint32_t*)pmm_alloc_frame();
+    
+    // Zero out user space entries (indices 256 to 287) and copy others from kernel directory
+    for (int i = 0; i < 1024; i++) {
+        if (i >= 256 && i < 288) {
+            new_dir[i] = 0; // Not present
+        } else {
+            new_dir[i] = page_directory[i];
+        }
+    }
+    return (uint32_t)new_dir;
+}
+
+// Free all user space pages and tables inside a page directory
+void vmm_clear_user_space(uint32_t* dir) {
+    for (int i = 256; i < 288; i++) {
+        if (dir[i] & PAGE_PRESENT) {
+            uint32_t* page_table = (uint32_t*)(dir[i] & 0xFFFFF000);
+            for (int j = 0; j < 1024; j++) {
+                if (page_table[j] & PAGE_PRESENT) {
+                    pmm_free_frame(page_table[j] & 0xFFFFF000);
+                    page_table[j] = 0;
+                }
+            }
+            pmm_free_frame(dir[i] & 0xFFFFF000);
+            dir[i] = 0;
+        }
+    }
+}
+
+// Get physical address of the master kernel page directory
+uint32_t vmm_get_kernel_page_dir(void) {
+    return (uint32_t)&page_directory;
 }
 
 void paging_init(void) {
@@ -105,14 +147,15 @@ void paging_init(void) {
     }
     
     // 3. Identity map first 128MB of RAM (indices 0 to 31 in directory)
+    // Removed PAGE_USER flag to make kernel space Supervisor-only!
     for (uint32_t table = 0; table < 32; table++) {
         for (uint32_t entry = 0; entry < 1024; entry++) {
             uint32_t phys_addr = (table * 4 * 1024 * 1024) + (entry * PAGE_SIZE);
-            // Present, Writable, User-accessible
-            identity_page_tables[table][entry] = phys_addr | PAGE_PRESENT | PAGE_WRITE | PAGE_USER;
+            // Present, Writable, Supervisor-only
+            identity_page_tables[table][entry] = phys_addr | PAGE_PRESENT | PAGE_WRITE;
         }
         // Link table in directory
-        page_directory[table] = ((uint32_t)&identity_page_tables[table]) | PAGE_PRESENT | PAGE_WRITE | PAGE_USER;
+        page_directory[table] = ((uint32_t)&identity_page_tables[table]) | PAGE_PRESENT | PAGE_WRITE;
     }
 
     
@@ -124,9 +167,9 @@ void paging_init(void) {
     uint32_t fb_size = binfo.pitch * binfo.height;
     uint32_t fb_end = fb_start + fb_size;
     
-    // Map VESA framebuffer page frames (identity mapped)
+    // Map VESA framebuffer page frames (identity mapped, Supervisor-only)
     for (uint32_t addr = fb_start; addr < fb_end; addr += PAGE_SIZE) {
-        vmm_map_page(addr, addr, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+        vmm_map_page(addr, addr, PAGE_PRESENT | PAGE_WRITE);
     }
     
     // 5. Enable hardware paging on CPU
@@ -140,3 +183,4 @@ void paging_init(void) {
         : "eax", "memory"
     );
 }
+

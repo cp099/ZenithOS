@@ -1,5 +1,6 @@
 #include "task.h"
 #include "heap.h"
+#include "paging.h"
 
 extern void switch_context(uint32_t* old_esp, uint32_t new_esp);
 
@@ -29,6 +30,8 @@ void scheduler_init(void) {
     boot_task->id = next_task_id++;
     boot_task->esp = 0; // Will be set when switching out of it
     boot_task->kstack = 0x90000; // Boot stack top
+    boot_task->cr3 = vmm_get_kernel_page_dir(); // Default kernel directory
+    boot_task->uid = 0; // Root user
     boot_task->state = TASK_RUNNING;
     boot_task->sleep_ticks = 0;
     boot_task->next = boot_task; // Circular list
@@ -47,6 +50,8 @@ Task* task_create(void (*entry)(void), uint32_t flags) {
     uint32_t stack_size = 4096;
     void* stack_mem = kmalloc(stack_size);
     new_task->kstack = (uint32_t)stack_mem + stack_size;
+    new_task->cr3 = vmm_get_kernel_page_dir(); // Default kernel directory
+    new_task->uid = 0; // Kernel thread / Root user by default
     new_task->state = TASK_READY;
     new_task->sleep_ticks = 0;
     
@@ -106,6 +111,15 @@ void scheduler_yield(void) {
     next_task->state = TASK_RUNNING;
     current_task = next_task;
     
+    // Swap CR3 to restore private page directory context if different
+    if (next_task->cr3 != 0) {
+        uint32_t current_cr3;
+        __asm__ volatile("mov %%cr3, %0" : "=r"(current_cr3));
+        if (current_cr3 != next_task->cr3) {
+            __asm__ volatile("mov %0, %%cr3" : : "r"(next_task->cr3));
+        }
+    }
+
     // Perform context switch
     switch_context(&old_task->esp, next_task->esp);
     

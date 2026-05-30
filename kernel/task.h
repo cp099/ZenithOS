@@ -13,6 +13,8 @@ typedef struct Task {
     uint32_t id;
     uint32_t esp;
     uint32_t kstack;
+    uint32_t cr3;
+    uint32_t uid;
     uint32_t state;
     uint32_t sleep_ticks;
     struct Task* next;

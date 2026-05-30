@@ -23,7 +23,7 @@ BOOT_IMG = $(BUILD_DIR)/zenithboot.img
 DISK_ZFS = $(BUILD_DIR)/zenithos.zfs
 
 # Compiler and Assembler flags
-CFLAGS = -ffreestanding -O2 -Wall -Wextra -nostdlib -fno-builtin -fno-stack-protector -m32 -I$(KERNEL_DIR)
+CFLAGS = -ffreestanding -O2 -Wall -Wextra -nostdlib -fno-builtin -fstack-protector-all -m32 -I$(KERNEL_DIR)
 ASMFLAGS = -f bin
 
 # Kernel object files list
@@ -89,6 +89,7 @@ SH_BIN = $(BUILD_DIR)/sh.bin
 HELLO_BIN = $(BUILD_DIR)/hello.bin
 CALC_BIN = $(BUILD_DIR)/calc.bin
 BLASTER_BIN = $(BUILD_DIR)/blaster.bin
+EXPLOIT_BIN = $(BUILD_DIR)/exploit.bin
 USER_OBJS = $(BUILD_DIR)/crt0.o $(BUILD_DIR)/libc.o
 
 $(BUILD_DIR)/crt0.o: user/crt0.asm
@@ -109,6 +110,9 @@ $(BUILD_DIR)/calc.o: user/calc.c user/libc.h
 $(BUILD_DIR)/blaster.o: user/blaster.c user/libc.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/exploit.o: user/exploit.c user/libc.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(SH_BIN): $(USER_OBJS) $(BUILD_DIR)/sh.o user/linker.ld
 	$(LD) -T user/linker.ld $(BUILD_DIR)/crt0.o $(BUILD_DIR)/sh.o $(BUILD_DIR)/libc.o -o $(BUILD_DIR)/sh.elf
 	$(OBJCOPY) -O binary $(BUILD_DIR)/sh.elf $@
@@ -125,8 +129,12 @@ $(BLASTER_BIN): $(USER_OBJS) $(BUILD_DIR)/blaster.o user/linker.ld
 	$(LD) -T user/linker.ld $(BUILD_DIR)/crt0.o $(BUILD_DIR)/blaster.o $(BUILD_DIR)/libc.o -o $(BUILD_DIR)/blaster.elf
 	$(OBJCOPY) -O binary $(BUILD_DIR)/blaster.elf $@
 
+$(EXPLOIT_BIN): $(USER_OBJS) $(BUILD_DIR)/exploit.o user/linker.ld
+	$(LD) -T user/linker.ld $(BUILD_DIR)/crt0.o $(BUILD_DIR)/exploit.o $(BUILD_DIR)/libc.o -o $(BUILD_DIR)/exploit.elf
+	$(OBJCOPY) -O binary $(BUILD_DIR)/exploit.elf $@
+
 # Create ZenithFS storage image and populate it with files
-$(DISK_ZFS): $(SH_BIN) $(HELLO_BIN) $(CALC_BIN) $(BLASTER_BIN)
+$(DISK_ZFS): $(SH_BIN) $(HELLO_BIN) $(CALC_BIN) $(BLASTER_BIN) $(EXPLOIT_BIN)
 	@echo "Creating and formatting ZenithFS storage image..."
 	python3 zfs_tool.py $(DISK_ZFS) format
 	@echo "Hello from ZenithFS File System!" > $(BUILD_DIR)/hello.txt
@@ -135,6 +143,7 @@ $(DISK_ZFS): $(SH_BIN) $(HELLO_BIN) $(CALC_BIN) $(BLASTER_BIN)
 	python3 zfs_tool.py $(DISK_ZFS) add $(HELLO_BIN) hello.bin
 	python3 zfs_tool.py $(DISK_ZFS) add $(CALC_BIN) calc.bin
 	python3 zfs_tool.py $(DISK_ZFS) add $(BLASTER_BIN) blaster.bin
+	python3 zfs_tool.py $(DISK_ZFS) add $(EXPLOIT_BIN) exploit.bin
 
 
 # Run in QEMU Emulator
