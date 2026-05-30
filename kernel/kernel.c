@@ -92,6 +92,12 @@ static void test_task(void) {
 // Kernel Main Entry Point
 // --------------------------------------------------------------------------
 __attribute__((section(".text.boot"))) void kernel_main(void) {
+    // Initialize stack guard first using CPU timestamp counter (TSC) to ensure all threads share the same random seed
+    uint32_t tsc_low;
+    __asm__ volatile("rdtsc" : "=a"(tsc_low) : : "edx");
+    extern uint32_t __stack_chk_guard;
+    __stack_chk_guard = 0xDEADC0DE ^ tsc_low ^ (uint32_t)&__stack_chk_guard;
+
     // Initialize serial port first for logging
     serial_init();
     serial_print("\n==================================================\n");
@@ -160,10 +166,6 @@ __attribute__((section(".text.boot"))) void kernel_main(void) {
     serial_print("[+] Enabling CPU hardware interrupts...\n");
     __asm__ volatile("sti");
     timer_wait(35);
-    
-    // Randomize kernel stack guard using PIT timer ticks and memory layout entropy
-    extern uint32_t __stack_chk_guard;
-    __stack_chk_guard = 0xDEADC0DE ^ get_ticks() ^ (uint32_t)&__stack_chk_guard;
     
     // 8. Probe storage and mount custom ZenithFS filesystem
     serial_print("[+] Probing storage and mounting ZenithFS...\n");
