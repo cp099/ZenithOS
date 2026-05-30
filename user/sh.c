@@ -190,6 +190,41 @@ int main(void) {
                 set_color(COLOR_WHITE, COLOR_DARK);
             }
         }
+        // ps command
+        else if (strcmp(cmd, "ps") == 0) {
+            TaskInfo tasks[16];
+            int num_tasks = get_tasks(tasks, 16);
+            if (num_tasks < 0) {
+                print("Failed to retrieve task listing.\n");
+            } else {
+                print("ID    STATE            MEMORY\n");
+                print("---------------------------------\n");
+                for (int i = 0; i < num_tasks; i++) {
+                    print(itoa(tasks[i].id, 10));
+                    int id_len = strlen(itoa(tasks[i].id, 10));
+                    for (int j = id_len; j < 6; j++) print(" ");
+                    
+                    const char* state_str = "UNKNOWN";
+                    if (tasks[i].state == 0) state_str = "READY";
+                    else if (tasks[i].state == 1) state_str = "RUNNING";
+                    else if (tasks[i].state == 2) state_str = "SLEEPING";
+                    else if (tasks[i].state == 3) state_str = "DEAD";
+                    else if (tasks[i].state == 4) state_str = "BLOCKED";
+                    else if (tasks[i].state == 5) state_str = "BLOCKED_INPUT";
+                    
+                    print(state_str);
+                    int state_len = strlen(state_str);
+                    for (int j = state_len; j < 17; j++) print(" ");
+                    
+                    if (tasks[i].mem_size_kb == 0) {
+                        print("0 KB (Kernel)\n");
+                    } else {
+                        print(itoa(tasks[i].mem_size_kb, 10));
+                        print(" KB\n");
+                    }
+                }
+            }
+        }
         // 8. Shutdown command
         else if (strcmp(cmd, "shutdown") == 0) {
             print("Initiating system shutdown...\n");

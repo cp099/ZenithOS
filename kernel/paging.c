@@ -184,3 +184,29 @@ void paging_init(void) {
     );
 }
 
+uint32_t vmm_get_allocated_memory_mb(void) {
+    uint32_t allocated = 0;
+    for (uint32_t i = 0; i < TOTAL_PAGES; i++) {
+        if (bitmap_test(i)) {
+            allocated++;
+        }
+    }
+    return (allocated * 4) / 1024;
+}
+
+uint32_t vmm_get_user_mapped_memory_kb(uint32_t* dir) {
+    if (dir == NULL || dir == (uint32_t*)&page_directory) return 0;
+    uint32_t pages = 0;
+    for (int i = 256; i < 288; i++) {
+        if (dir[i] & PAGE_PRESENT) {
+            uint32_t* page_table = (uint32_t*)(dir[i] & 0xFFFFF000);
+            for (int j = 0; j < 1024; j++) {
+                if (page_table[j] & PAGE_PRESENT) {
+                    pages++;
+                }
+            }
+        }
+    }
+    return pages * 4;
+}
+

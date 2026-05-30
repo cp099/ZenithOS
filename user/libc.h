@@ -49,6 +49,23 @@ void clear(void);
 char* itoa(int val, int base);
 int input(char* buf, int len);
 
+// Task states
+#define TASK_READY         0
+#define TASK_RUNNING       1
+#define TASK_SLEEPING      2
+#define TASK_DEAD          3
+#define TASK_BLOCKED       4
+#define TASK_BLOCKED_INPUT 5
+
+// Task structure copied from kernel
+typedef struct TaskInfo {
+    uint32_t id;
+    uint32_t state;
+    uint32_t mem_size_kb;
+} TaskInfo;
+
+int get_tasks(TaskInfo* buf, int max_tasks);
+
 
 
 // --------------------------------------------------------------------------

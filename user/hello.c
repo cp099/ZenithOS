@@ -9,10 +9,8 @@ int main(void) {
     
     sleep(200); // 200 ticks = 2 seconds
     
-    print("Sleep finished! Reload-returning to shell...\n");
+    print("Sleep finished! Returning to shell...\n");
     
-    // Reload the shell binary to return to the shell prompt
-    exec("sh.bin");
-    
+    exit();
     return 0;
 }

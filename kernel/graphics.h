@@ -43,6 +43,7 @@ void graphics_draw_splash(void);
 void graphics_update_progress(const char* status, uint32_t percentage);
 void graphics_draw_shutdown(void);
 void graphics_draw_restart(void);
+void graphics_draw_statusbar(void);
 
 #endif
 

@@ -82,8 +82,12 @@ static void boot_delay(void) {
 
 static void test_task(void) {
     while (1) {
-        serial_print("  [TASK] Periodic kernel background thread heartbeat...\n");
-        for (volatile int i = 0; i < 5000000; i++);
+        extern void graphics_draw_statusbar(void);
+        graphics_draw_statusbar();
+        
+        Task* cur = get_current_task();
+        cur->state = TASK_SLEEPING;
+        cur->sleep_ticks = 100; // Sleep 1 second
         scheduler_yield();
     }
 }
@@ -337,12 +341,12 @@ void user_program(void) {
 // --------------------------------------------------------------------------
 // Transition from Ring 0 to Ring 3 (User mode) using iret stack manipulation
 // --------------------------------------------------------------------------
-static void enter_ring3(uint32_t entry_point, uint32_t user_stack) {
+void enter_ring3(uint32_t entry_point, uint32_t user_stack) {
     // Disable interrupts during stack setup
     __asm__ volatile("cli");
     
     // Configure TSS stack pointer to point to kernel stack bottom for interrupt handling
-    set_kernel_stack(0x90000);
+    set_kernel_stack(get_current_task()->kstack);
     
     // Set segment registers to point to User Data Segment selector (0x20 | RPL 3 = 0x23)
     __asm__ volatile(
@@ -365,6 +369,10 @@ static void enter_ring3(uint32_t entry_point, uint32_t user_stack) {
         : "r"(entry_point), "r"(user_stack)
         : "eax", "memory"
     );
+}
+
+void user_entry_wrapper(void) {
+    enter_ring3(0x40000000, 0x40100000);
 }
 
 // Stack protector guard symbols

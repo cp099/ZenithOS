@@ -33,5 +33,9 @@ void vmm_clear_user_space(uint32_t* dir);
 // Get physical address of the master kernel page directory
 uint32_t vmm_get_kernel_page_dir(void);
 
+// Sizing helper APIs for status bar and ps command
+uint32_t vmm_get_allocated_memory_mb(void);
+uint32_t vmm_get_user_mapped_memory_kb(uint32_t* dir);
+
 #endif
 

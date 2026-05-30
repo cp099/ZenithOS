@@ -537,6 +537,6 @@ int main(void) {
 
     clear();
     puts("zenith_blaster: closed. Returning to shell...\n");
-    exec("sh.bin");
+    exit();
     return 0;
 }

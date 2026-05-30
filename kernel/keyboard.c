@@ -1,6 +1,7 @@
 #include "keyboard.h"
 #include "idt.h"
 #include "graphics.h"
+#include "task.h"
 
 // I/O Port reader helper
 static inline uint8_t inb(uint16_t port) {
@@ -136,6 +137,7 @@ static void keyboard_callback(registers_t* regs) {
             char c = upper ? kbd_us_upper[scancode] : kbd_us_lower[scancode];
             if (c != 0) {
                 buffer_write(c);
+                task_wake_keyboard_waiters();
             }
         }
     }
@@ -159,7 +161,9 @@ bool keyboard_haschar(void) {
 
 char keyboard_getchar(void) {
     while (!buffer_has_data()) {
-        __asm__ volatile("hlt"); // Power saving wait for interrupt
+        Task* cur = get_current_task();
+        cur->state = TASK_BLOCKED_INPUT;
+        scheduler_yield();
     }
     return buffer_read();
 }

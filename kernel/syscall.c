@@ -90,18 +90,39 @@ static void syscall_handler(registers_t* regs) {
         
         case SYS_SLEEP: {
             uint32_t ticks = regs->ebx;
-            timer_wait(ticks);
+            Task* cur = get_current_task();
+            cur->state = TASK_SLEEPING;
+            cur->sleep_ticks = ticks;
             regs->eax = 0;
+            scheduler_yield();
             break;
         }
         
         case SYS_EXIT: {
-            print_string_default("\n[USER PROCESS] Exit syscall invoked. Halting user task.\n");
-            regs->eax = 0;
-            // Loop user thread indefinitely
-            while (1) {
-                __asm__ volatile("hlt");
+            Task* cur = get_current_task();
+            
+            // Reclaim child task's page directory mappings
+            uint32_t* child_dir = (uint32_t*)cur->cr3;
+            if (child_dir != (uint32_t*)vmm_get_kernel_page_dir()) {
+                // Switch CPU's CR3 back to kernel directory context
+                __asm__ volatile("mov %0, %%cr3" : : "r"(vmm_get_kernel_page_dir()));
+                
+                // Clear user pages and free directory frame
+                vmm_clear_user_space(child_dir);
+                pmm_free_frame((uint32_t)child_dir);
             }
+            
+            // Mark task as dead
+            cur->state = TASK_DEAD;
+            cur->exit_code = (int)regs->ebx; // Store exit code from ebx
+            
+            // Unblock parent task
+            if (cur->parent != NULL) {
+                cur->parent->state = TASK_READY;
+            }
+            
+            // Yield CPU context to switch away permanently
+            scheduler_yield();
             break;
         }
 
@@ -145,27 +166,31 @@ static void syscall_handler(registers_t* regs) {
                 } else {
                     Task* cur = get_current_task();
                     
-                    // Create private page directory if the task currently shares the kernel directory
-                    if (cur->cr3 == vmm_get_kernel_page_dir()) {
-                        cur->cr3 = vmm_create_page_dir();
-                    }
+                    // Create new child task
+                    extern void user_entry_wrapper(void);
+                    Task* child = task_create(user_entry_wrapper, 0);
+                    child->parent = cur;
+                    child->uid = 1000; // Drops privilege level to user
                     
-                    // Clear the old user space pages/tables to prevent leaks
-                    vmm_clear_user_space((uint32_t*)cur->cr3);
+                    // Create private page directory for child
+                    uint32_t* child_dir = (uint32_t*)vmm_create_page_dir();
+                    child->cr3 = (uint32_t)child_dir;
                     
                     // Map new program pages in the process's page directory (with 16KB extra for BSS/padding safety)
                     uint32_t mem_size = (uint32_t)size + 16384;
                     for (uint32_t addr = 0x40000000; addr < 0x40000000 + mem_size; addr += 4096) {
-                        vmm_map_page_in_dir((uint32_t*)cur->cr3, addr, pmm_alloc_frame(), PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+                        vmm_map_page_in_dir(child_dir, addr, pmm_alloc_frame(), PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
                     }
                     
                     // Map a private user stack page range (from 0x400F8000 to 0x40100000, 32KB = 8 pages)
                     for (uint32_t addr = 0x400F8000; addr < 0x40100000; addr += 4096) {
-                        vmm_map_page_in_dir((uint32_t*)cur->cr3, addr, pmm_alloc_frame(), PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+                        vmm_map_page_in_dir(child_dir, addr, pmm_alloc_frame(), PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
                     }
 
-                    // Switch CPU's CR3 register to the process directory context
-                    __asm__ volatile("mov %0, %%cr3" : : "r"(cur->cr3));
+                    // Temporarily switch CPU's CR3 register to the child process context to copy data
+                    uint32_t parent_cr3;
+                    __asm__ volatile("mov %%cr3, %0" : "=r"(parent_cr3));
+                    __asm__ volatile("mov %0, %%cr3" : : "r"(child_dir));
 
                     // Copy code into mapped user virtual space 0x40000000
                     for (int i = 0; i < size; i++) {
@@ -181,23 +206,26 @@ static void syscall_handler(registers_t* regs) {
                     for (uint32_t i = 0; i < 32768; i++) {
                         ((uint8_t*)0x400F8000)[i] = 0;
                     }
+                    
+                    // Restore parent CR3 context
+                    __asm__ volatile("mov %0, %%cr3" : : "r"(parent_cr3));
 
                     // Log execution event to serial port
-                    serial_print("  [+] SYS_EXEC: Launched ");
+                    serial_print("  [+] SYS_EXEC: Spawned child ");
                     serial_print(local_filename);
                     serial_print(" (File size: ");
                     serial_print_hex(size);
-                    serial_print(" bytes, Memory mapped: ");
-                    serial_print_hex(mem_size);
                     serial_print(" bytes)\n");
                     
-                    // Drop privileges: any spawned program drops from Root (0) to User (1000)
-                    cur->uid = 1000;
+                    // Block parent and ready child
+                    cur->state = TASK_BLOCKED;
+                    child->state = TASK_READY;
                     
-                    // Reset registers to execution entry point (0x40000000) and stack top (0x40100000)
-                    regs->eip = 0x40000000;
-                    regs->useresp = 0x40100000;
-                    regs->eax = 0; // Success
+                    // Set parent's return EAX to 0 (success)
+                    regs->eax = 0;
+                    
+                    // Yield CPU so the child runs immediately
+                    scheduler_yield();
                 }
             }
             break;
@@ -276,6 +304,41 @@ static void syscall_handler(registers_t* regs) {
             } else {
                 graphics_draw_shutdown();
                 regs->eax = 0;
+            }
+            break;
+        }
+ 
+        case SYS_GET_TASKS: {
+            TaskInfo* user_buf = (TaskInfo*)regs->ebx;
+            uint32_t max_tasks = regs->ecx;
+            
+            if (user_buf == NULL || !syscall_verify_pointer(user_buf, max_tasks * sizeof(TaskInfo))) {
+                print_string_default("\n[SYSCALL ERROR] Access Violation: Invalid pointer passed to SYS_GET_TASKS!\n");
+                regs->eax = -1;
+            } else {
+                Task* head = get_task_list_head();
+                uint32_t count = 0;
+                if (head != NULL) {
+                    Task* curr = head;
+                    do {
+                        if (count >= max_tasks) break;
+                        
+                        TaskInfo info;
+                        info.id = curr->id;
+                        info.state = curr->state;
+                        
+                        // Calculate memory size
+                        extern uint32_t vmm_get_user_mapped_memory_kb(uint32_t* dir);
+                        info.mem_size_kb = vmm_get_user_mapped_memory_kb((uint32_t*)curr->cr3);
+                        
+                        // Copy to user space buffer
+                        user_buf[count] = info;
+                        count++;
+                        
+                        curr = curr->next;
+                    } while (curr != head);
+                }
+                regs->eax = count;
             }
             break;
         }

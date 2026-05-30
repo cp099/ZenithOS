@@ -18,7 +18,8 @@
 #define SYS_SET_CURSOR 10
 #define SYS_UPTIME    11
 #define SYS_SHUTDOWN  12
-#define SYS_REBOOT    13
+#define SYS_GET_TASKS 13
+#define SYS_REBOOT    14
 
 
 // Initialize syscall gate (registers interrupt 0x80 handler)

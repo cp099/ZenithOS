@@ -1,6 +1,7 @@
 #include "graphics.h"
 #include "font.h"
 #include "timer.h"
+#include "task.h"
 
 static struct BootInfo boot_info;
 static volatile uint8_t* fb = NULL;
@@ -606,6 +607,88 @@ void graphics_draw_restart(void) {
     while (inb_local(0x64) & 0x02);
     outb_local(0x64, 0xFE);
     while (1) { __asm__ volatile("hlt"); }
+}
+
+static void kernel_itoa(int n, char* s) {
+    int i, sign;
+    if ((sign = n) < 0) n = -n;
+    i = 0;
+    do {
+        s[i++] = n % 10 + '0';
+    } while ((n /= 10) > 0);
+    if (sign < 0) s[i++] = '-';
+    s[i] = '\0';
+    
+    // Reverse
+    for (int j = 0, k = i - 1; j < k; j++, k--) {
+        char temp = s[j];
+        s[j] = s[k];
+        s[k] = temp;
+    }
+}
+
+static void draw_string_at(const char* str, uint32_t x, uint32_t y, uint32_t fg, uint32_t bg) {
+    for (size_t i = 0; str[i] != '\0'; i++) {
+        draw_char(str[i], x + i * CHAR_WIDTH, y, fg, bg);
+    }
+}
+
+void graphics_draw_statusbar(void) {
+    uint32_t bar_y = boot_info.height - 36;
+    uint32_t bar_h = 30;
+    uint32_t bar_x = MARGIN_LEFT;
+    uint32_t bar_w = boot_info.width - MARGIN_LEFT - MARGIN_RIGHT;
+    
+    // Renders a sleek, modern bar
+    draw_rounded_rect(bar_x, bar_y, bar_w, bar_h, 8, 0x12131A);
+    draw_rounded_rect_outline(bar_x, bar_y, bar_w, bar_h, 8, 0x2D2E3D);
+    
+    // Get uptime
+    uint32_t seconds = get_ticks() / 100;
+    
+    // Active tasks count
+    Task* head = get_task_list_head();
+    uint32_t task_count = 0;
+    if (head != NULL) {
+        Task* curr = head;
+        do {
+            task_count++;
+            curr = curr->next;
+        } while (curr != head);
+    }
+    
+    // Memory usage
+    extern uint32_t vmm_get_allocated_memory_mb(void);
+    uint32_t mem_mb = vmm_get_allocated_memory_mb();
+    
+    // Format strings
+    char upt_str[32] = "Uptime: ";
+    char num_buf[16];
+    kernel_itoa(seconds, num_buf);
+    int len = 8;
+    for (int i = 0; num_buf[i] != '\0'; i++) upt_str[len++] = num_buf[i];
+    upt_str[len++] = 's';
+    upt_str[len] = '\0';
+    
+    char task_str[32] = "Tasks: ";
+    kernel_itoa(task_count, num_buf);
+    len = 7;
+    for (int i = 0; num_buf[i] != '\0'; i++) task_str[len++] = num_buf[i];
+    task_str[len] = '\0';
+    
+    char mem_str[64] = "Memory: ";
+    kernel_itoa(mem_mb, num_buf);
+    len = 8;
+    for (int i = 0; num_buf[i] != '\0'; i++) mem_str[len++] = num_buf[i];
+    const char* suffix = " MB / 128 MB";
+    for (int i = 0; suffix[i] != '\0'; i++) mem_str[len++] = suffix[i];
+    mem_str[len] = '\0';
+    
+    // Draw text inside status bar (y = bar_y + 3)
+    uint32_t text_y = bar_y + 3;
+    draw_string_at(upt_str, bar_x + 24, text_y, 0x00E5FF, 0x12131A);
+    draw_string_at(task_str, bar_x + (bar_w / 2) - 60, text_y, 0xE2E8F0, 0x12131A);
+    draw_string_at(mem_str, bar_x + bar_w - 280, text_y, 0x10B981, 0x12131A);
 }
 
 

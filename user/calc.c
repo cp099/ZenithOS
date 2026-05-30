@@ -273,7 +273,7 @@ int main(void) {
         if (strcmp(p, "exit") == 0 || strcmp(p, "quit") == 0) {
             clear();
             puts("zenith_calc: closed. Returning to shell...\n");
-            exec("sh.bin");
+            exit();
             return 0;
         }
 

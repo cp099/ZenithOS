@@ -221,8 +221,18 @@ void restart(void) {
     __asm__ volatile(
         "int $0x80"
         :
-        : "a"(13)
+        : "a"(14)
     );
+}
+
+int get_tasks(TaskInfo* buf, int max_tasks) {
+    int count;
+    __asm__ volatile(
+        "int $0x80"
+        : "=a"(count)
+        : "a"(13), "b"(buf), "c"(max_tasks)
+    );
+    return count;
 }
 
 void puts(const char* str) {
