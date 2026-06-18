@@ -201,6 +201,10 @@ __attribute__((section(".text.boot"))) void kernel_main(void) {
         // Update current task CR3 tracking
         get_current_task()->cr3 = (uint32_t)process_dir;
 
+        // Allocate a window for the shell
+        extern void create_window_for_task(struct Task* owner, int w, int h, const char* title);
+        create_window_for_task(get_current_task(), 640, 400, "sh.bin");
+
         // Map user pages starting at 0x40000000 in the private directory (with 16KB extra for BSS/padding)
         uint32_t mem_size = (uint32_t)size + 16384;
         for (uint32_t addr = 0x40000000; addr < 0x40000000 + mem_size; addr += 4096) {

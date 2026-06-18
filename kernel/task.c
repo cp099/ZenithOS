@@ -1,6 +1,8 @@
 #include "task.h"
 #include "heap.h"
 #include "paging.h"
+#include "vfs.h"
+
 
 extern void switch_context(uint32_t* old_esp, uint32_t new_esp);
 extern void set_kernel_stack(uint32_t stack_phys);
@@ -12,6 +14,20 @@ static Task* task_to_reap = NULL;
 
 void reap_dead_tasks(void) {
     if (task_to_reap != NULL) {
+        for (int i = 0; i < 16; i++) {
+            if (task_to_reap->fd_table[i] != NULL) {
+                fs_node_t* node = task_to_reap->fd_table[i];
+                if (node->close) {
+                    node->close(node);
+                } else {
+                    kfree(node);
+                }
+                task_to_reap->fd_table[i] = NULL;
+            }
+        }
+        extern void destroy_window_for_task(struct Task* owner);
+        destroy_window_for_task(task_to_reap);
+
         if (task_to_reap->kstack != 0 && task_to_reap->id != 0) {
             kfree((void*)(task_to_reap->kstack - 4096));
         }
@@ -19,6 +35,75 @@ void reap_dead_tasks(void) {
         task_to_reap = NULL;
     }
 }
+
+void task_terminate(Task* task, int exit_code) {
+    if (!task || task->id == 0) return;
+
+    for (int i = 0; i < 16; i++) {
+        if (task->fd_table[i] != NULL) {
+            fs_node_t* node = task->fd_table[i];
+            if (node->close) {
+                node->close(node);
+            } else {
+                kfree(node);
+            }
+            task->fd_table[i] = NULL;
+        }
+    }
+
+    extern void destroy_window_for_task(struct Task* owner);
+    destroy_window_for_task(task);
+
+    uint32_t* child_dir = (uint32_t*)task->cr3;
+    if (child_dir != (uint32_t*)vmm_get_kernel_page_dir()) {
+        uint32_t current_cr3;
+        __asm__ volatile("mov %%cr3, %0" : "=r"(current_cr3));
+        if (current_cr3 == (uint32_t)child_dir) {
+            __asm__ volatile("mov %0, %%cr3" : : "r"(vmm_get_kernel_page_dir()));
+        }
+        vmm_clear_user_space(child_dir);
+        pmm_free_frame((uint32_t)child_dir);
+    }
+
+    task->state = TASK_DEAD;
+    task->exit_code = exit_code;
+
+    if (task->parent != NULL) {
+        task->parent->state = TASK_READY;
+    }
+
+    if (task == current_task) {
+        scheduler_yield();
+    } else {
+        // Safe reaping of a non-current task to prevent task list and stack memory leaks
+        Task* prev = task_list_head;
+        if (prev != NULL) {
+            while (prev->next != task) {
+                prev = prev->next;
+                if (prev == task_list_head) {
+                    break;
+                }
+            }
+            if (prev->next == task) {
+                prev->next = task->next;
+                if (task_list_head == task) {
+                    if (task->next == task) {
+                        task_list_head = NULL;
+                    } else {
+                        task_list_head = task->next;
+                    }
+                }
+            }
+        }
+        
+        // Free stack and task struct
+        if (task->kstack != 0) {
+            kfree((void*)(task->kstack - 4096));
+        }
+        kfree(task);
+    }
+}
+
 
 static void task_exit(void) {
     // Mark current task as dead
@@ -54,6 +139,12 @@ void scheduler_init(void) {
     boot_task->exit_code = 0;
     boot_task->user_esp = 0;
     boot_task->start_tick = 0;
+    for (int i = 0; i < 16; i++) {
+        boot_task->fd_table[i] = NULL;
+    }
+    boot_task->fd_table[0] = vfs_create_keyboard_node();
+    boot_task->fd_table[1] = vfs_create_console_node();
+    boot_task->fd_table[2] = vfs_create_console_node();
     boot_task->next = boot_task; // Circular list
     
     current_task = boot_task;
@@ -77,6 +168,12 @@ Task* task_create(void (*entry)(void), uint32_t flags) {
     new_task->parent = NULL;
     new_task->exit_code = 0;
     new_task->user_esp = 0;
+    for (int i = 0; i < 16; i++) {
+        new_task->fd_table[i] = NULL;
+    }
+    new_task->fd_table[0] = vfs_create_keyboard_node();
+    new_task->fd_table[1] = vfs_create_console_node();
+    new_task->fd_table[2] = vfs_create_console_node();
     extern uint32_t get_ticks(void);
     new_task->start_tick = get_ticks();
     

@@ -12,8 +12,14 @@
 // Print a string to the console
 void print(const char* str);
 
-// Read keyboard input into buffer (returns number of characters read)
-int read(char* buf, int max_len);
+// VFS File Descriptor operations
+int open(const char* path, int flags);
+int close(int fd);
+int read(int fd, char* buf, int len);
+int write(int fd, const char* buf, int len);
+
+// PC Speaker beep sound
+void beep(uint32_t freq, uint32_t ms);
 
 // Suspend program for specified timer ticks
 void sleep(int ticks);

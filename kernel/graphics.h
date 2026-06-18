@@ -52,6 +52,28 @@ void graphics_move_mouse(int dx, int dy);
 void draw_mouse_cursor(void);
 void graphics_toggle_launcher(void);
 
+#define MAX_WINDOWS 8
+struct Task;
+
+typedef struct {
+    int x, y;
+    int width, height;
+    char title[64];
+    int active;
+    uint32_t* buffer;
+    struct Task* owner;
+    uint32_t terminal_col;
+    uint32_t terminal_row;
+} Window;
+
+void create_window_for_task(struct Task* owner, int w, int h, const char* title);
+void destroy_window_for_task(struct Task* owner);
+void graphics_toggle_mouse_button(void);
+uint32_t* get_backbuffer_ptr(void);
+uint32_t get_screen_width(void);
+uint32_t get_screen_height(void);
+
 #endif
+
 
 

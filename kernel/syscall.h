@@ -23,6 +23,10 @@
 #define SYS_WRITE_FILE 15
 #define SYS_SWAP_BUFFERS 16
 #define SYS_SWIPE_TRANSITION 17
+#define SYS_BEEP             18
+#define SYS_OPEN             19
+#define SYS_CLOSE            20
+
 
 
 // Initialize syscall gate (registers interrupt 0x80 handler)

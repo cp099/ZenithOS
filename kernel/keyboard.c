@@ -150,6 +150,10 @@ static void keyboard_callback(registers_t* regs) {
                 } else if (scancode == 0x4D) { // Right Arrow
                     graphics_move_mouse(10, 0);
                     return;
+                } else if (scancode == 0x39) { // Space
+                    extern void graphics_toggle_mouse_button(void);
+                    graphics_toggle_mouse_button();
+                    return;
                 }
             }
 

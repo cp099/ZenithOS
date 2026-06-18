@@ -43,6 +43,14 @@ bool syscall_verify_string(const char* str, uint32_t max_len) {
 }
 
 
+static int local_strcmp(const char* s1, const char* s2) {
+    while (*s1 && (*s1 == *s2)) {
+        s1++;
+        s2++;
+    }
+    return *(unsigned char*)s1 - *(unsigned char*)s2;
+}
+
 // Master syscall dispatcher (triggered on int 0x80 / Interrupt 128)
 static void syscall_handler(registers_t* regs) {
     // Re-enable interrupts during system call execution to allow timer/keyboard interrupts to fire
@@ -52,46 +60,33 @@ static void syscall_handler(registers_t* regs) {
     
     switch (syscall_num) {
         case SYS_WRITE: {
-            const char* str = (const char*)regs->ebx;
-            if (!syscall_verify_string(str, 4096)) {
+            int fd = (int)regs->ebx;
+            const uint8_t* buffer = (const uint8_t*)regs->ecx;
+            uint32_t size = regs->edx;
+            
+            if (buffer == NULL || !syscall_verify_pointer(buffer, size)) {
                 print_string_default("\n[SYSCALL ERROR] Access Violation: Invalid pointer passed to SYS_WRITE!\n");
                 regs->eax = -1;
             } else {
-                print_string_default(str);
-                serial_print(str);
-                graphics_swap_buffers();
-                regs->eax = 0;
+                extern int vfs_write(int fd, uint8_t* buffer, uint32_t size);
+                int bytes = vfs_write(fd, (uint8_t*)buffer, size);
+                regs->eax = bytes;
             }
             break;
         }
         
         case SYS_READ: {
-            char* buffer = (char*)regs->ebx;
-            uint32_t max_len = regs->ecx;
+            int fd = (int)regs->ebx;
+            uint8_t* buffer = (uint8_t*)regs->ecx;
+            uint32_t size = regs->edx;
             
-            if (buffer == NULL || !syscall_verify_pointer(buffer, max_len)) {
+            if (buffer == NULL || !syscall_verify_pointer(buffer, size)) {
                 print_string_default("\n[SYSCALL ERROR] Access Violation: Invalid pointer passed to SYS_READ!\n");
                 regs->eax = -1;
             } else {
-                uint32_t count = 0;
-                while (count < max_len - 1) {
-                    char c = keyboard_getchar();
-                    if (c == '\b') {
-                        if (count > 0) {
-                            count--;
-                            // Backspace echo (erase char visually)
-                            print_string_default("\b \b");
-                            graphics_swap_buffers();
-                        }
-                        continue;
-                    }
-                    buffer[count++] = c;
-                    print_char_default(c); // Echo keypress
-                    graphics_swap_buffers();
-                    if (c == '\n') break;
-                }
-                buffer[count] = '\0';
-                regs->eax = count;
+                extern int vfs_read(int fd, uint8_t* buffer, uint32_t size);
+                int bytes = vfs_read(fd, buffer, size);
+                regs->eax = bytes;
             }
             break;
         }
@@ -107,30 +102,7 @@ static void syscall_handler(registers_t* regs) {
         }
         
         case SYS_EXIT: {
-            Task* cur = get_current_task();
-            
-            // Reclaim child task's page directory mappings
-            uint32_t* child_dir = (uint32_t*)cur->cr3;
-            if (child_dir != (uint32_t*)vmm_get_kernel_page_dir()) {
-                // Switch CPU's CR3 back to kernel directory context
-                __asm__ volatile("mov %0, %%cr3" : : "r"(vmm_get_kernel_page_dir()));
-                
-                // Clear user pages and free directory frame
-                vmm_clear_user_space(child_dir);
-                pmm_free_frame((uint32_t)child_dir);
-            }
-            
-            // Mark task as dead
-            cur->state = TASK_DEAD;
-            cur->exit_code = (int)regs->ebx; // Store exit code from ebx
-            
-            // Unblock parent task
-            if (cur->parent != NULL) {
-                cur->parent->state = TASK_READY;
-            }
-            
-            // Yield CPU context to switch away permanently
-            scheduler_yield();
+            task_terminate(get_current_task(), (int)regs->ebx);
             break;
         }
 
@@ -260,6 +232,15 @@ static void syscall_handler(registers_t* regs) {
                         serial_print(" (File size: ");
                         serial_print_hex(size);
                         serial_print(" bytes)\n");
+
+                        int w = 640, h = 400;
+                        if (local_strcmp(argv_strings[0], "calc.bin") == 0 || local_strcmp(argv_strings[0], "calc") == 0) {
+                            w = 480; h = 320;
+                        } else if (local_strcmp(argv_strings[0], "blaster.bin") == 0 || local_strcmp(argv_strings[0], "blaster") == 0) {
+                            w = 800; h = 480;
+                        }
+                        extern void create_window_for_task(struct Task* owner, int w, int h, const char* title);
+                        create_window_for_task(child, w, h, argv_strings[0]);
 
                         cur->state = TASK_BLOCKED;
                         child->state = TASK_READY;
@@ -434,6 +415,34 @@ static void syscall_handler(registers_t* regs) {
             break;
         }
 
+        case SYS_BEEP: {
+            uint32_t frequency = regs->ebx;
+            uint32_t duration_ms = regs->ecx;
+            extern void play_beep(uint32_t frequency, uint32_t duration_ms);
+            play_beep(frequency, duration_ms);
+            regs->eax = 0;
+            break;
+        }
+
+        case SYS_OPEN: {
+            const char* filename = (const char*)regs->ebx;
+            int flags = (int)regs->ecx;
+            if (!syscall_verify_string(filename, 256)) {
+                print_string_default("\n[SYSCALL ERROR] Access Violation: Invalid pointer passed to SYS_OPEN!\n");
+                regs->eax = -1;
+            } else {
+                extern int vfs_open(const char* filename, int flags);
+                regs->eax = vfs_open(filename, flags);
+            }
+            break;
+        }
+
+        case SYS_CLOSE: {
+            int fd = (int)regs->ebx;
+            extern int vfs_close(int fd);
+            regs->eax = vfs_close(fd);
+            break;
+        }
 
         default:
             print_string_default("\n[SYSCALL ERROR] Unknown syscall number invoked!\n");

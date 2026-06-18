@@ -96,7 +96,7 @@ int main(void) {
         swap_buffers();
 
         // Read command line
-        int len = read(input, sizeof(input));
+        int len = read(0, input, sizeof(input));
         if (len <= 0) {
             print("\n");
             continue;

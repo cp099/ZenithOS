@@ -254,6 +254,7 @@ void check_collisions() {
                     else if (al->type == 1) player.score += 80;
                     else player.score += 50;
                     
+                    beep(150, 100);
                     break;
                 }
             }
@@ -482,6 +483,7 @@ int main(void) {
                         lasers[i].y = VIEW_MAX_Y - 2;
                         lasers[i].prev_x = lasers[i].x;
                         lasers[i].prev_y = lasers[i].y;
+                        beep(1000, 50);
                         break;
                     }
                 }

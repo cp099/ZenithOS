@@ -6,42 +6,41 @@ This document reports the architectural, security, and feature verification stat
 
 ## 1. Core Kernel Upgrades (100% Completed & Verified)
 
-### A. Secure String & Pointer Verification (SYS_WRITE, SYS_EXEC, SYS_READ_FILE)
+### A. VFS File Descriptor Abstraction Layer (open, close, read, write)
 * **Status**: **RESOLVED**
-* **Implementation**: Implemented `syscall_verify_pointer` and `syscall_verify_string` in [syscall.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/syscall.c#L14-L44). All user-space pointers are validated before dereferencing, protecting the kernel from page faults, memory leaks, and TOCTOU exploits.
+* **Implementation**: Implemented the Virtual File System in [vfs.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/vfs.c). File descriptors are abstracted through `fs_node_t` wrappers. The kernel exposes `SYS_OPEN` (syscall 19) and `SYS_CLOSE` (syscall 20), and refactored `SYS_READ` (syscall 1) and `SYS_WRITE` (syscall 0) to use file descriptors.
+* **Standard Mounts**:
+  - `/dev/keyboard` (stdin)
+  - `/dev/console` (stdout / stderr)
+  - `/dev/fb` (VESA Framebuffer)
 
 ### B. Lost Keyboard Wake-up Race Condition (Kernel Lock-up)
 * **Status**: **RESOLVED**
-* **Implementation**: Rewrote `keyboard_getchar` in [keyboard.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/keyboard.c#L196-L208). We now disable interrupts (`cli`) before checking the ring buffer and enable interrupts (`sti`) only before yielding or returning. This prevents the kernel from entering an un-wakeable sleep state.
+* **Implementation**: Rewrote `keyboard_getchar` to disable interrupts (`cli`) before checking the ring buffer and enable interrupts (`sti`) only before yielding or returning. This prevents the kernel from entering an un-wakeable sleep state.
 
 ### C. Full Command Line Arguments (argc / argv)
 * **Status**: **RESOLVED**
-* **Implementation**: Added `user_esp` to `struct Task` in [task.h](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/task.h). `SYS_EXEC` tokenizes arguments and writes them (along with `argv` pointers) onto the child task's stack. 
-* **Shell Fix**: Updated [sh.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/user/sh.c#L106-L114) to copy the command line into `orig_input` before tokenizing, ensuring the full command line (with arguments) is successfully passed to `exec(orig_input)`.
+* **Implementation**: Added `user_esp` to `struct Task`. `SYS_EXEC` tokenizes arguments and writes them (along with `argv` pointers) onto the child task's stack. Updated `sh.c` to copy the command line into `orig_input` before tokenizing, ensuring arguments are successfully passed to `exec(orig_input)`.
 
-### D. Heap Corruption on Boot Task exit
+### D. Safe Heap Reaping and Task Termination
 * **Status**: **RESOLVED**
-* **Implementation**: Fixed `reap_dead_tasks` in [task.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/task.c) to verify that `task_to_reap->id != 0` before freeing stack frames, protecting the boot-time kernel stack from heap corruption.
+* **Implementation**: Modified `task_terminate` in [task.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/task.c#L74-L101) to cleanly remove tasks from the circular task list and free their stack and task descriptors immediately if they are not the currently active task. This completely avoids task memory leaks when closing programs.
 
-### E. ZenithFS Directory formatting & Inode formatting
+### E. Exploit Pointer Leak Verification
 * **Status**: **RESOLVED**
-* **Implementation**: Fixed the inode index bracket rendering in [zenithfs.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/zenithfs.c#L173-L194).
+* **Implementation**: Modified [exploit.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/user/exploit.c#L12-L18) to call `write()` directly with kernel space pointers instead of `print()`. This tests the kernel's `syscall_verify_pointer` security checks directly and returns a clean `[SYSCALL ERROR]` instead of crashing with a user-space page fault inside `strlen`.
 
 ---
 
 ## 2. Advanced Premium Features (100% Completed)
 
-### A. Foreground Task Interruption (Ctrl+C)
+### A. PC Speaker Audio Engine
 * **Status**: **RESOLVED**
-* **Implementation**: Configured keyboard handler in [keyboard.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/keyboard.c#L156-L167) to capture `Ctrl+C` make-codes. If a Ring 3 user process is running, the kernel marks the task `TASK_DEAD`, wakes the blocked parent process (shell), and yields the CPU.
+* **Implementation**: Configured PIT Channel 2 (ports 0x43, 0x42) and system control port B (port 0x61) in [sound.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/sound.c) to generate square waves. Exposed `SYS_BEEP` (syscall ID 18) and a userland `beep(freq, ms)` wrapper.
 
 ### B. Read-Write Filesystem Support
 * **Status**: **RESOLVED**
-* **Implementation**: Implemented block-allocation bitmaps, block writing, and inode creation inside [zenithfs.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/zenithfs.c#L413-L538). Exposed `SYS_WRITE_FILE` (syscall ID 15) to allow user space files to be created and written dynamically.
-
-### C. Live System Monitor (`top`)
-* **Status**: **RESOLVED**
-* **Implementation**: Created the interactive process monitor `top` in [sh.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/user/sh.c#L259-L330). It lists CPU tasks, status flags (READY, RUNNING, SLEEPING, BLOCKED), virtual memory consumption, and execution uptime in real time.
+* **Implementation**: Implemented block-allocation bitmaps, block writing, and inode creation inside `zenithfs.c`. Exposed `SYS_WRITE_FILE` (syscall ID 15) to allow user space files to be created and written dynamically.
 
 ---
 

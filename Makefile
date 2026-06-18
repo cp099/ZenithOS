@@ -39,7 +39,9 @@ KERNEL_OBJS = $(BUILD_DIR)/kernel.o \
               $(BUILD_DIR)/zenithfs.o \
               $(BUILD_DIR)/heap.o \
               $(BUILD_DIR)/task.o \
-              $(BUILD_DIR)/syscall.o
+              $(BUILD_DIR)/syscall.o \
+              $(BUILD_DIR)/vfs.o \
+              $(BUILD_DIR)/sound.o
 
 .PHONY: all clean run
 

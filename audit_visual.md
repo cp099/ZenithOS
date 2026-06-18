@@ -10,19 +10,26 @@ This document reports the visual and graphics engine subsystem verification of Z
 * **Status**: **RESOLVED**
 * **Implementation**: Allocated a 5MB kernel backbuffer inside [graphics.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/graphics.c#L11). All graphics primitive operations (`draw_pixel`, `draw_rect`, `draw_char`, etc.) render into this buffer in RAM. `graphics_swap_buffers` performs a block memory write to copy the backbuffer to the physical VESA framebuffer, achieving zero screen tearing and flicker.
 * **System Call**: Exposed `SYS_SWAP_BUFFERS` (ID 16) and `SYS_SWIPE_TRANSITION` (ID 17) to Ring 3 userland.
-* **Latency Fix**: Modified `SYS_WRITE`, `SYS_CLEAR`, and `SYS_SET_CURSOR` in [syscall.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/syscall.c) to trigger buffer swaps at the end of their execution. This completely eliminates print buffer latency, allowing console applications to update instantly in real time.
 
 ### B. Fuzzy Font Scaling (ISO-Latin1 8x16 VGA Font)
 * **Status**: **RESOLVED**
-* **Implementation**: Replaced the 8x8 font in [font.h](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/font.h) with a high-resolution, pixel-perfect 8x16 ISO-Latin-1 standard VGA font. The rendering system draws characters at 2x integer scale (16x32 pixels), providing sharp, crisp typography.
+* **Implementation**: Replaced the 8x8 font with a high-resolution, pixel-perfect 8x16 ISO-Latin-1 standard VGA font. The rendering system draws characters at 2x integer scale (16x32 pixels) in the terminal container, and crisp 1x scale (8x16 pixels) inside desktop windows.
 
-### C. Glassmorphism Console Window (Translucent Acrylic Blending)
+### C. Multi-Window Compositing Manager (Desktop GUI)
 * **Status**: **RESOLVED**
-* **Implementation**: Implemented the `draw_rounded_rect_alpha` blending algorithm in [graphics.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/graphics.c). The main terminal window is blended with the background wallpaper at 70% opacity (`alpha = 180`), achieving a premium glassmorphic/acrylic visual appearance.
+* **Implementation**:
+  - Implemented the window compositor in [graphics.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/graphics.c#L1016-L1084). Defines `Window` structures representing coordinates, size, title, and individual buffer.
+  - Automatically spawns a window in `SYS_EXEC` for any launched userland program (`calc.bin`, `blaster.bin`, `hello.bin`).
+  - Automatically cleans up window handles and deallocates window frame buffers when the task is reaped or terminated.
+  - Redraws the wallpaper gradient, container shadows, status bar, and all overlapping windows onto the backbuffer during swapping when windows are active.
 
-### D. Interactive Mouse Cursor
+### D. Interactive Mouse & Drag-and-Drop Windows
 * **Status**: **RESOLVED**
-* **Implementation**: Designed a 12x20 cyber-cyan mouse cursor sprite in [graphics.c](file:///Users/apple/Personal_Files/Codes/ZenithOS/kernel/graphics.c#L876-L918). The keyboard interrupt handler updates the mouse location and redraws the cursor sprite in response to `Ctrl + Arrow` keys. The backbuffer automatically saves and restores the background under the cursor during swaps to prevent any screen corruption.
+* **Implementation**:
+  - Toggles the simulated mouse cursor via `Ctrl + Space` (which changes cursor color to yellow to show button-down state).
+  - Moves the mouse cursor via `Ctrl + Arrows`.
+  - Windows can be clicked and dragged around the desktop by grabbing their title bar.
+  - Clicking the red `[X]` button on the window's top-right corner terminates the owner task automatically.
 
 ### E. Pixel-Art Icons & Slide-Up launcher
 * **Status**: **RESOLVED**

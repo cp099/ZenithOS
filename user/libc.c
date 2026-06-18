@@ -4,22 +4,56 @@
 // System Call Assembler Wrappers
 // --------------------------------------------------------------------------
 
-void print(const char* str) {
+int open(const char* path, int flags) {
+    int fd;
+    __asm__ volatile(
+        "int $0x80"
+        : "=a"(fd)
+        : "a"(19), "b"(path), "c"(flags)
+    );
+    return fd;
+}
+
+int close(int fd) {
+    int ret;
+    __asm__ volatile(
+        "int $0x80"
+        : "=a"(ret)
+        : "a"(20), "b"(fd)
+    );
+    return ret;
+}
+
+int read(int fd, char* buf, int len) {
+    int bytes;
+    __asm__ volatile(
+        "int $0x80"
+        : "=a"(bytes)
+        : "a"(1), "b"(fd), "c"(buf), "d"(len)
+    );
+    return bytes;
+}
+
+int write(int fd, const char* buf, int len) {
+    int bytes;
+    __asm__ volatile(
+        "int $0x80"
+        : "=a"(bytes)
+        : "a"(0), "b"(fd), "c"(buf), "d"(len)
+    );
+    return bytes;
+}
+
+void beep(uint32_t freq, uint32_t ms) {
     __asm__ volatile(
         "int $0x80"
         :
-        : "a"(0), "b"(str)
+        : "a"(18), "b"(freq), "c"(ms)
     );
 }
 
-int read(char* buf, int max_len) {
-    int count;
-    __asm__ volatile(
-        "int $0x80"
-        : "=a"(count)
-        : "a"(1), "b"(buf), "c"(max_len)
-    );
-    return count;
+void print(const char* str) {
+    write(1, str, strlen(str));
 }
 
 void sleep(int ticks) {
@@ -283,7 +317,7 @@ void clear(void) {
 }
 
 int input(char* buf, int len) {
-    return read(buf, len);
+    return read(0, buf, len);
 }
 
 char* itoa(int val, int base) {

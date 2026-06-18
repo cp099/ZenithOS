@@ -11,6 +11,8 @@
 #define TASK_BLOCKED       4
 #define TASK_BLOCKED_INPUT 5
 
+struct fs_node;
+
 typedef struct Task {
     uint32_t id;
     uint32_t esp;
@@ -23,6 +25,7 @@ typedef struct Task {
     int exit_code;
     uint32_t user_esp;
     uint32_t start_tick;
+    struct fs_node* fd_table[16];
     struct Task* next;
 } Task;
 
@@ -40,5 +43,6 @@ void scheduler_tick(void);
 Task* get_current_task(void);
 Task* get_task_list_head(void);
 void task_wake_keyboard_waiters(void);
+void task_terminate(struct Task* task, int exit_code);
 
 #endif

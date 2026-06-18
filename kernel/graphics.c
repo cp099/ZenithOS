@@ -2,6 +2,7 @@
 #include "font.h"
 #include "timer.h"
 #include "task.h"
+#include "heap.h"
 
 static struct BootInfo boot_info;
 static volatile uint8_t* fb = NULL;
@@ -9,6 +10,12 @@ static uint32_t terminal_col = 0;
 static uint32_t terminal_row = 0;
 
 static uint32_t backbuffer[1280 * 1024];
+
+static bool compositor_active = false;
+static Window windows[MAX_WINDOWS] = {0};
+static bool mouse_button_down = false;
+static int drag_window_idx = -1;
+
 
 static int mouse_x = 0;
 static int mouse_y = 0;
@@ -120,16 +127,34 @@ void graphics_draw_frame(void) {
 }
 
 void graphics_clear_console(void) {
-    uint32_t work_x = MARGIN_LEFT;
-    uint32_t work_y = MARGIN_TOP;
-    uint32_t work_w = boot_info.width - MARGIN_LEFT - MARGIN_RIGHT;
-    uint32_t work_h = boot_info.height - MARGIN_TOP - MARGIN_BOTTOM;
-    draw_rect(work_x, work_y, work_w, work_h, current_bg);
-    terminal_col = 0;
-    terminal_row = 0;
-    
-    // Draw initial cursor at top left of workspace
-    draw_rect(MARGIN_LEFT, MARGIN_TOP + (CHAR_HEIGHT - 1), CHAR_WIDTH, 1, current_fg);
+    Task* cur = get_current_task();
+    Window* win = NULL;
+    if (cur != NULL) {
+        for (int i = 0; i < MAX_WINDOWS; i++) {
+            if (windows[i].active && windows[i].owner == cur) {
+                win = &windows[i];
+                break;
+            }
+        }
+    }
+    if (win != NULL) {
+        for (int i = 0; i < win->width * win->height; i++) {
+            win->buffer[i] = 0x0C0C12;
+        }
+        win->terminal_col = 0;
+        win->terminal_row = 0;
+    } else {
+        uint32_t work_x = MARGIN_LEFT;
+        uint32_t work_y = MARGIN_TOP;
+        uint32_t work_w = boot_info.width - MARGIN_LEFT - MARGIN_RIGHT;
+        uint32_t work_h = boot_info.height - MARGIN_TOP - MARGIN_BOTTOM;
+        draw_rect(work_x, work_y, work_w, work_h, current_bg);
+        terminal_col = 0;
+        terminal_row = 0;
+        
+        // Draw initial cursor at top left of workspace
+        draw_rect(MARGIN_LEFT, MARGIN_TOP + (CHAR_HEIGHT - 1), CHAR_WIDTH, 1, current_fg);
+    }
 }
 
 void draw_pixel(uint32_t x, uint32_t y, uint32_t color) {
@@ -280,58 +305,176 @@ static void graphics_scroll(void) {
     terminal_row = (work_h / char_height) - 1;
 }
 
+void draw_char_in_window_buffer(uint32_t* buffer, int win_width, char c, int x, int y, uint32_t fg, uint32_t bg) {
+    for (uint32_t row_idx = 0; row_idx < 16; row_idx++) {
+        uint8_t row_data = font_bitmap[(uint8_t)c][row_idx];
+        for (uint32_t bit_idx = 0; bit_idx < 8; bit_idx++) {
+            int active = (row_data & (0x80 >> bit_idx)) != 0;
+            int px = x + bit_idx;
+            int py = y + row_idx;
+            uint32_t color = active ? fg : bg;
+            if (color != 0xFFFFFFFF) {
+                buffer[py * win_width + px] = color;
+            }
+        }
+    }
+}
+
+static void draw_string_at_1x(const char* str, int x, int y, uint32_t fg, uint32_t bg) {
+    for (size_t i = 0; str[i] != '\0'; i++) {
+        for (uint32_t row_idx = 0; row_idx < 16; row_idx++) {
+            uint8_t row_data = font_bitmap[(uint8_t)str[i]][row_idx];
+            for (uint32_t bit_idx = 0; bit_idx < 8; bit_idx++) {
+                int active = (row_data & (0x80 >> bit_idx)) != 0;
+                int px = x + i * 8 + bit_idx;
+                int py = y + row_idx;
+                uint32_t color = active ? fg : bg;
+                if (color != 0xFFFFFFFF) {
+                    draw_pixel(px, py, color);
+                }
+            }
+        }
+    }
+}
+
 void print_char(char c, uint32_t fg, uint32_t bg) {
-    uint32_t max_cols = (boot_info.width - MARGIN_LEFT - MARGIN_RIGHT) / CHAR_WIDTH;
-    uint32_t max_rows = (boot_info.height - MARGIN_TOP - MARGIN_BOTTOM) / CHAR_HEIGHT;
-    
-    // Erase cursor at current position
-    draw_rect(MARGIN_LEFT + terminal_col * CHAR_WIDTH, MARGIN_TOP + terminal_row * CHAR_HEIGHT + (CHAR_HEIGHT - 1), CHAR_WIDTH, 1, bg);
-
-    if (c == '\b') {
-        if (terminal_col > 0) {
-            terminal_col--;
+    Task* cur = get_current_task();
+    Window* win = NULL;
+    if (cur != NULL) {
+        for (int i = 0; i < MAX_WINDOWS; i++) {
+            if (windows[i].active && windows[i].owner == cur) {
+                win = &windows[i];
+                break;
+            }
         }
-        draw_rect(MARGIN_LEFT + terminal_col * CHAR_WIDTH, MARGIN_TOP + terminal_row * CHAR_HEIGHT + (CHAR_HEIGHT - 1), CHAR_WIDTH, 1, fg);
-        return;
-    }
-    
-    if (c == '\n') {
-        terminal_col = 0;
-        if (++terminal_row >= max_rows) {
-            graphics_scroll();
-        }
-        draw_rect(MARGIN_LEFT + terminal_col * CHAR_WIDTH, MARGIN_TOP + terminal_row * CHAR_HEIGHT + (CHAR_HEIGHT - 1), CHAR_WIDTH, 1, fg);
-        return;
-    }
-    
-    if (c == '\r') {
-        terminal_col = 0;
-        draw_rect(MARGIN_LEFT + terminal_col * CHAR_WIDTH, MARGIN_TOP + terminal_row * CHAR_HEIGHT + (CHAR_HEIGHT - 1), CHAR_WIDTH, 1, fg);
-        return;
     }
 
-    if (c == '\t') {
-        terminal_col = (terminal_col + 4) & ~3;
-        if (terminal_col >= max_cols) {
+    if (win != NULL) {
+        uint32_t max_cols = win->width / 8;
+        uint32_t max_rows = win->height / 16;
+        
+        if (c == '\b') {
+            if (win->terminal_col > 0) {
+                win->terminal_col--;
+            }
+            draw_char_in_window_buffer(win->buffer, win->width, ' ', win->terminal_col * 8, win->terminal_row * 16, fg, bg);
+            return;
+        }
+        
+        if (c == '\n') {
+            win->terminal_col = 0;
+            if (++win->terminal_row >= max_rows) {
+                for (int y = 0; y < (int)(win->height - 16); y++) {
+                    for (int x = 0; x < win->width; x++) {
+                        win->buffer[y * win->width + x] = win->buffer[(y + 16) * win->width + x];
+                    }
+                }
+                for (int y = win->height - 16; y < win->height; y++) {
+                    for (int x = 0; x < win->width; x++) {
+                        win->buffer[y * win->width + x] = bg;
+                    }
+                }
+                win->terminal_row = max_rows - 1;
+            }
+            return;
+        }
+        
+        if (c == '\r') {
+            win->terminal_col = 0;
+            return;
+        }
+        
+        if (c == '\t') {
+            win->terminal_col = (win->terminal_col + 4) & ~3;
+            if (win->terminal_col >= max_cols) {
+                win->terminal_col = 0;
+                if (++win->terminal_row >= max_rows) {
+                    for (int y = 0; y < (int)(win->height - 16); y++) {
+                        for (int x = 0; x < win->width; x++) {
+                            win->buffer[y * win->width + x] = win->buffer[(y + 16) * win->width + x];
+                        }
+                    }
+                    for (int y = win->height - 16; y < win->height; y++) {
+                        for (int x = 0; x < win->width; x++) {
+                            win->buffer[y * win->width + x] = bg;
+                        }
+                    }
+                    win->terminal_row = max_rows - 1;
+                }
+            }
+            return;
+        }
+        
+        draw_char_in_window_buffer(win->buffer, win->width, c, win->terminal_col * 8, win->terminal_row * 16, fg, bg);
+        
+        if (++win->terminal_col >= max_cols) {
+            win->terminal_col = 0;
+            if (++win->terminal_row >= max_rows) {
+                for (int y = 0; y < (int)(win->height - 16); y++) {
+                    for (int x = 0; x < win->width; x++) {
+                        win->buffer[y * win->width + x] = win->buffer[(y + 16) * win->width + x];
+                    }
+                }
+                for (int y = win->height - 16; y < win->height; y++) {
+                    for (int x = 0; x < win->width; x++) {
+                        win->buffer[y * win->width + x] = bg;
+                    }
+                }
+                win->terminal_row = max_rows - 1;
+            }
+        }
+    } else {
+        uint32_t max_cols = (boot_info.width - MARGIN_LEFT - MARGIN_RIGHT) / CHAR_WIDTH;
+        uint32_t max_rows = (boot_info.height - MARGIN_TOP - MARGIN_BOTTOM) / CHAR_HEIGHT;
+        
+        draw_rect(MARGIN_LEFT + terminal_col * CHAR_WIDTH, MARGIN_TOP + terminal_row * CHAR_HEIGHT + (CHAR_HEIGHT - 1), CHAR_WIDTH, 1, bg);
+
+        if (c == '\b') {
+            if (terminal_col > 0) {
+                terminal_col--;
+            }
+            draw_rect(MARGIN_LEFT + terminal_col * CHAR_WIDTH, MARGIN_TOP + terminal_row * CHAR_HEIGHT + (CHAR_HEIGHT - 1), CHAR_WIDTH, 1, fg);
+            return;
+        }
+        
+        if (c == '\n') {
+            terminal_col = 0;
+            if (++terminal_row >= max_rows) {
+                graphics_scroll();
+            }
+            draw_rect(MARGIN_LEFT + terminal_col * CHAR_WIDTH, MARGIN_TOP + terminal_row * CHAR_HEIGHT + (CHAR_HEIGHT - 1), CHAR_WIDTH, 1, fg);
+            return;
+        }
+        
+        if (c == '\r') {
+            terminal_col = 0;
+            draw_rect(MARGIN_LEFT + terminal_col * CHAR_WIDTH, MARGIN_TOP + terminal_row * CHAR_HEIGHT + (CHAR_HEIGHT - 1), CHAR_WIDTH, 1, fg);
+            return;
+        }
+
+        if (c == '\t') {
+            terminal_col = (terminal_col + 4) & ~3;
+            if (terminal_col >= max_cols) {
+                terminal_col = 0;
+                if (++terminal_row >= max_rows) {
+                    graphics_scroll();
+                }
+            }
+            draw_rect(MARGIN_LEFT + terminal_col * CHAR_WIDTH, MARGIN_TOP + terminal_row * CHAR_HEIGHT + (CHAR_HEIGHT - 1), CHAR_WIDTH, 1, fg);
+            return;
+        }
+        
+        draw_char(c, MARGIN_LEFT + terminal_col * CHAR_WIDTH, MARGIN_TOP + terminal_row * CHAR_HEIGHT, fg, bg);
+        
+        if (++terminal_col >= max_cols) {
             terminal_col = 0;
             if (++terminal_row >= max_rows) {
                 graphics_scroll();
             }
         }
-        draw_rect(MARGIN_LEFT + terminal_col * CHAR_WIDTH, MARGIN_TOP + terminal_row * CHAR_HEIGHT + (CHAR_HEIGHT - 1), CHAR_WIDTH, 1, fg);
-        return;
-    }
-    
-    draw_char(c, MARGIN_LEFT + terminal_col * CHAR_WIDTH, MARGIN_TOP + terminal_row * CHAR_HEIGHT, fg, bg);
-    
-    if (++terminal_col >= max_cols) {
-        terminal_col = 0;
-        if (++terminal_row >= max_rows) {
-            graphics_scroll();
-        }
-    }
 
-    draw_rect(MARGIN_LEFT + terminal_col * CHAR_WIDTH, MARGIN_TOP + terminal_row * CHAR_HEIGHT + (CHAR_HEIGHT - 1), CHAR_WIDTH, 1, fg);
+        draw_rect(MARGIN_LEFT + terminal_col * CHAR_WIDTH, MARGIN_TOP + terminal_row * CHAR_HEIGHT + (CHAR_HEIGHT - 1), CHAR_WIDTH, 1, fg);
+    }
 }
 
 void print_string(const char* str, uint32_t fg, uint32_t bg) {
@@ -349,17 +492,29 @@ void print_string_default(const char* str) {
 }
 
 void graphics_set_cursor(uint32_t col, uint32_t row) {
-    uint32_t max_cols = (boot_info.width - MARGIN_LEFT - MARGIN_RIGHT) / CHAR_WIDTH;
-    uint32_t max_rows = (boot_info.height - MARGIN_TOP - MARGIN_BOTTOM) / CHAR_HEIGHT;
-    
-    // Erase cursor at current position
-    draw_rect(MARGIN_LEFT + terminal_col * CHAR_WIDTH, MARGIN_TOP + terminal_row * CHAR_HEIGHT + (CHAR_HEIGHT - 1), CHAR_WIDTH, 1, current_bg);
-    
-    if (col < max_cols) terminal_col = col;
-    if (row < max_rows) terminal_row = row;
-    
-    // Draw cursor at new position
-    draw_rect(MARGIN_LEFT + terminal_col * CHAR_WIDTH, MARGIN_TOP + terminal_row * CHAR_HEIGHT + (CHAR_HEIGHT - 1), CHAR_WIDTH, 1, current_fg);
+    Task* cur = get_current_task();
+    Window* win = NULL;
+    if (cur != NULL) {
+        for (int i = 0; i < MAX_WINDOWS; i++) {
+            if (windows[i].active && windows[i].owner == cur) {
+                win = &windows[i];
+                break;
+            }
+        }
+    }
+    if (win != NULL) {
+        uint32_t max_cols = win->width / 8;
+        uint32_t max_rows = win->height / 16;
+        if (col < max_cols) win->terminal_col = col;
+        if (row < max_rows) win->terminal_row = row;
+    } else {
+        uint32_t max_cols = (boot_info.width - MARGIN_LEFT - MARGIN_RIGHT) / CHAR_WIDTH;
+        uint32_t max_rows = (boot_info.height - MARGIN_TOP - MARGIN_BOTTOM) / CHAR_HEIGHT;
+        draw_rect(MARGIN_LEFT + terminal_col * CHAR_WIDTH, MARGIN_TOP + terminal_row * CHAR_HEIGHT + (CHAR_HEIGHT - 1), CHAR_WIDTH, 1, current_bg);
+        if (col < max_cols) terminal_col = col;
+        if (row < max_rows) terminal_row = row;
+        draw_rect(MARGIN_LEFT + terminal_col * CHAR_WIDTH, MARGIN_TOP + terminal_row * CHAR_HEIGHT + (CHAR_HEIGHT - 1), CHAR_WIDTH, 1, current_fg);
+    }
 }
 
 void graphics_draw_splash(void) {
@@ -694,13 +849,141 @@ void graphics_draw_statusbar(void) {
 void graphics_swap_buffers(void) {
     if (fb == NULL) return;
     
-    // Save background under cursor
-    graphics_save_cursor_bg();
+    if (compositor_active) {
+        // Redraw desktop background
+        // 1. Wallpaper
+        graphics_draw_gradient(0x070B19, 0x160A26);
+        
+        // 2. Empty container
+        uint32_t container_x = MARGIN_LEFT - 8;
+        uint32_t container_y = MARGIN_TOP - 8;
+        uint32_t container_w = boot_info.width - MARGIN_LEFT - MARGIN_RIGHT + 16;
+        uint32_t container_h = boot_info.height - MARGIN_TOP - MARGIN_BOTTOM + 16;
+        draw_rounded_rect(container_x + 12, container_y + 12, container_w, container_h, 12, 0x030305);
+        draw_rounded_rect(container_x + 8, container_y + 8, container_w, container_h, 12, 0x050508);
+        draw_rounded_rect(container_x + 4, container_y + 4, container_w, container_h, 12, 0x08080C);
+        extern void draw_rounded_rect_alpha(int x, int y, int w, int h, int r, uint32_t color, uint8_t alpha);
+        draw_rounded_rect_alpha(container_x, container_y, container_w, container_h, 12, 0x07080B, 180);
+        draw_rounded_rect_outline(container_x, container_y, container_w, container_h, 12, 0x2D2E3D);
+        
+        // 3. Status bar
+        {
+            uint32_t bar_y = boot_info.height - 36;
+            uint32_t bar_h = 30;
+            uint32_t bar_x = MARGIN_LEFT;
+            uint32_t bar_w = boot_info.width - MARGIN_LEFT - MARGIN_RIGHT;
+            draw_rounded_rect(bar_x, bar_y, bar_w, bar_h, 8, 0x12131A);
+            draw_rounded_rect_outline(bar_x, bar_y, bar_w, bar_h, 8, 0x2D2E3D);
+            uint32_t seconds = get_ticks() / 100;
+            Task* head = get_task_list_head();
+            uint32_t task_count = 0;
+            if (head != NULL) {
+                Task* curr = head;
+                do {
+                    task_count++;
+                    curr = curr->next;
+                } while (curr != head);
+            }
+            extern uint32_t vmm_get_allocated_memory_mb(void);
+            uint32_t mem_mb = vmm_get_allocated_memory_mb();
+            char upt_str[32] = "Uptime: ";
+            char num_buf[16];
+            kernel_itoa(seconds, num_buf);
+            int len = 8;
+            for (int i = 0; num_buf[i] != '\0'; i++) upt_str[len++] = num_buf[i];
+            upt_str[len++] = 's';
+            upt_str[len] = '\0';
+            char task_str[32] = "Tasks: ";
+            kernel_itoa(task_count, num_buf);
+            len = 7;
+            for (int i = 0; num_buf[i] != '\0'; i++) task_str[len++] = num_buf[i];
+            task_str[len] = '\0';
+            char mem_str[64] = "Memory: ";
+            kernel_itoa(mem_mb, num_buf);
+            len = 8;
+            for (int i = 0; num_buf[i] != '\0'; i++) mem_str[len++] = num_buf[i];
+            const char* suffix = " MB / 128 MB";
+            for (int i = 0; suffix[i] != '\0'; i++) mem_str[len++] = suffix[i];
+            mem_str[len] = '\0';
+            int clock_cx = bar_x + 13;
+            int clock_cy = bar_y + 15;
+            draw_circle(clock_cx, clock_cy, 7, 0x00E5FF);
+            draw_pixel(clock_cx, clock_cy, 0x00E5FF);
+            draw_pixel(clock_cx, clock_cy - 1, 0x00E5FF);
+            draw_pixel(clock_cx, clock_cy - 2, 0x00E5FF);
+            draw_pixel(clock_cx, clock_cy - 3, 0x00E5FF);
+            draw_pixel(clock_cx, clock_cy - 4, 0x00E5FF);
+            draw_pixel(clock_cx + 1, clock_cy, 0x00E5FF);
+            draw_pixel(clock_cx + 2, clock_cy, 0x00E5FF);
+            draw_pixel(clock_cx + 3, clock_cy, 0x00E5FF);
+            int task_cx = bar_x + (bar_w / 2) - 80;
+            int task_cy = bar_y + 15;
+            draw_filled_circle(task_cx, task_cy - 3, 3, 0xE2E8F0);
+            draw_rect(task_cx - 5, task_cy + 1, 11, 4, 0xE2E8F0);
+            draw_pixel(task_cx - 6, task_cy + 3, 0xE2E8F0);
+            draw_pixel(task_cx - 6, task_cy + 4, 0xE2E8F0);
+            draw_pixel(task_cx + 6, task_cy + 3, 0xE2E8F0);
+            draw_pixel(task_cx + 6, task_cy + 4, 0xE2E8F0);
+            int ram_cx = bar_x + bar_w - 300;
+            int ram_cy = bar_y + 15;
+            draw_rect(ram_cx - 6, ram_cy - 5, 13, 1, 0x10B981);
+            draw_rect(ram_cx - 6, ram_cy + 5, 13, 1, 0x10B981);
+            draw_rect(ram_cx - 6, ram_cy - 5, 1, 11, 0x10B981);
+            draw_rect(ram_cx + 6, ram_cy - 5, 1, 11, 0x10B981);
+            draw_pixel(ram_cx - 8, ram_cy - 3, 0x10B981); draw_pixel(ram_cx - 7, ram_cy - 3, 0x10B981);
+            draw_pixel(ram_cx - 8, ram_cy - 1, 0x10B981); draw_pixel(ram_cx - 7, ram_cy - 1, 0x10B981);
+            draw_pixel(ram_cx - 8, ram_cy + 1, 0x10B981); draw_pixel(ram_cx - 7, ram_cy + 1, 0x10B981);
+            draw_pixel(ram_cx - 8, ram_cy + 3, 0x10B981); draw_pixel(ram_cx - 7, ram_cy + 3, 0x10B981);
+            draw_pixel(ram_cx + 7, ram_cy - 3, 0x10B981); draw_pixel(ram_cx + 8, ram_cy - 3, 0x10B981);
+            draw_pixel(ram_cx + 7, ram_cy - 1, 0x10B981); draw_pixel(ram_cx + 8, ram_cy - 1, 0x10B981);
+            draw_pixel(ram_cx + 7, ram_cy + 1, 0x10B981); draw_pixel(ram_cx + 8, ram_cy + 1, 0x10B981);
+            draw_pixel(ram_cx + 7, ram_cy + 3, 0x10B981); draw_pixel(ram_cx + 8, ram_cy + 3, 0x10B981);
+            uint32_t text_y = bar_y + 3;
+            draw_string_at(upt_str, bar_x + 28, text_y, 0x00E5FF, 0x12131A);
+            draw_string_at(task_str, bar_x + (bar_w / 2) - 60, text_y, 0xE2E8F0, 0x12131A);
+            draw_string_at(mem_str, bar_x + bar_w - 280, text_y, 0x10B981, 0x12131A);
+        }
+        
+        // 4. Draw windows
+        for (int i = 0; i < MAX_WINDOWS; i++) {
+            if (!windows[i].active) continue;
+            
+            draw_rect(windows[i].x + 4, windows[i].y - 20, windows[i].width, windows[i].height + 24, 0x050508);
+            
+            uint32_t border_color = (i == MAX_WINDOWS - 1) ? 0x00E5FF : 0x2D2E3D;
+            draw_rect(windows[i].x - 1, windows[i].y - 25, windows[i].width + 2, windows[i].height + 26, border_color);
+            
+            draw_rect(windows[i].x, windows[i].y - 24, windows[i].width, 24, 0x12131A);
+            
+            draw_string_at_1x(windows[i].title, windows[i].x + 8, windows[i].y - 20, 0xE2E8F0, 0xFFFFFFFF);
+            
+            int cx = windows[i].x + windows[i].width - 22;
+            int cy = windows[i].y - 20;
+            draw_rect(cx, cy, 16, 16, 0xEF4444);
+            draw_pixel(cx + 4, cy + 4, 0xFFFFFF); draw_pixel(cx + 11, cy + 4, 0xFFFFFF);
+            draw_pixel(cx + 5, cy + 5, 0xFFFFFF); draw_pixel(cx + 10, cy + 5, 0xFFFFFF);
+            draw_pixel(cx + 6, cy + 6, 0xFFFFFF); draw_pixel(cx + 9, cy + 6, 0xFFFFFF);
+            draw_pixel(cx + 7, cy + 7, 0xFFFFFF); draw_pixel(cx + 8, cy + 7, 0xFFFFFF);
+            draw_pixel(cx + 7, cy + 8, 0xFFFFFF); draw_pixel(cx + 8, cy + 8, 0xFFFFFF);
+            draw_pixel(cx + 6, cy + 9, 0xFFFFFF); draw_pixel(cx + 9, cy + 9, 0xFFFFFF);
+            draw_pixel(cx + 5, cy + 10, 0xFFFFFF); draw_pixel(cx + 10, cy + 10, 0xFFFFFF);
+            draw_pixel(cx + 4, cy + 11, 0xFFFFFF); draw_pixel(cx + 11, cy + 11, 0xFFFFFF);
+            
+            for (int y = 0; y < windows[i].height; y++) {
+                int dest_y = windows[i].y + y;
+                if (dest_y < 0 || dest_y >= (int)boot_info.height) continue;
+                for (int x = 0; x < windows[i].width; x++) {
+                    int dest_x = windows[i].x + x;
+                    if (dest_x < 0 || dest_x >= (int)boot_info.width) continue;
+                    backbuffer[dest_y * boot_info.width + dest_x] = windows[i].buffer[y * windows[i].width + x];
+                }
+            }
+        }
+    }
     
-    // Draw cursor on backbuffer
+    graphics_save_cursor_bg();
     draw_mouse_cursor();
     
-    // Perform swap (copy backbuffer to physical screen)
     uint32_t width = boot_info.width;
     uint32_t height = boot_info.height;
     uint32_t pitch = boot_info.pitch;
@@ -727,9 +1010,143 @@ void graphics_swap_buffers(void) {
         }
     }
     
-    // Restore background under cursor on backbuffer so subsequent drawing doesn't overwrite it
     graphics_restore_cursor_bg();
 }
+
+void create_window_for_task(struct Task* owner, int w, int h, const char* title) {
+    int slot = -1;
+    for (int i = 0; i < MAX_WINDOWS; i++) {
+        if (!windows[i].active) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot == -1) return;
+    
+    windows[slot].active = 1;
+    windows[slot].owner = owner;
+    windows[slot].width = w;
+    windows[slot].height = h;
+    windows[slot].x = (boot_info.width - w) / 2 + slot * 20;
+    windows[slot].y = (boot_info.height - h) / 2 + slot * 20 - 20;
+    
+    if (windows[slot].x < (int)MARGIN_LEFT) windows[slot].x = MARGIN_LEFT;
+    if (windows[slot].y < (int)MARGIN_TOP) windows[slot].y = MARGIN_TOP;
+    
+    int len = 0;
+    while (title[len] != '\0' && len < 63) {
+        windows[slot].title[len] = title[len];
+        len++;
+    }
+    windows[slot].title[len] = '\0';
+    
+    windows[slot].buffer = (uint32_t*)kmalloc(w * h * 4);
+    for (int i = 0; i < w * h; i++) {
+        windows[slot].buffer[i] = 0x0C0C12;
+    }
+    
+    windows[slot].terminal_col = 0;
+    windows[slot].terminal_row = 0;
+    
+    if (slot < MAX_WINDOWS - 1) {
+        Window temp = windows[slot];
+        for (int j = slot; j < MAX_WINDOWS - 1; j++) {
+            windows[j] = windows[j + 1];
+        }
+        windows[MAX_WINDOWS - 1] = temp;
+    }
+    
+    compositor_active = true;
+}
+
+void destroy_window_for_task(struct Task* owner) {
+    for (int i = 0; i < MAX_WINDOWS; i++) {
+        if (windows[i].active && windows[i].owner == owner) {
+            windows[i].active = 0;
+            if (windows[i].buffer) {
+                kfree(windows[i].buffer);
+                windows[i].buffer = NULL;
+            }
+            windows[i].owner = NULL;
+        }
+    }
+    
+    bool any_active = false;
+    for (int i = 0; i < MAX_WINDOWS; i++) {
+        if (windows[i].active) {
+            any_active = true;
+            break;
+        }
+    }
+    if (!any_active) {
+        compositor_active = false;
+    }
+}
+
+void graphics_toggle_mouse_button(void) {
+    if (!mouse_button_down) {
+        mouse_button_down = true;
+        drag_window_idx = -1;
+        
+        for (int i = MAX_WINDOWS - 1; i >= 0; i--) {
+            if (!windows[i].active) continue;
+            
+            int title_x = windows[i].x;
+            int title_y = windows[i].y - 24;
+            int title_w = windows[i].width;
+            int title_h = 24;
+            
+            int close_x = windows[i].x + windows[i].width - 22;
+            int close_y = windows[i].y - 20;
+            int close_w = 16;
+            int close_h = 16;
+            
+            if (mouse_x >= close_x && mouse_x < close_x + close_w &&
+                mouse_y >= close_y && mouse_y < close_y + close_h) {
+                struct Task* owner = windows[i].owner;
+                if (owner) {
+                    extern void task_terminate(struct Task* task, int exit_code);
+                    task_terminate(owner, 0);
+                }
+                mouse_button_down = false;
+                break;
+            }
+            
+            if (mouse_x >= title_x && mouse_x < title_x + title_w &&
+                mouse_y >= title_y && mouse_y < title_y + title_h) {
+                drag_window_idx = i;
+                
+                if (i < MAX_WINDOWS - 1) {
+                    Window temp = windows[i];
+                    for (int j = i; j < MAX_WINDOWS - 1; j++) {
+                        windows[j] = windows[j + 1];
+                    }
+                    windows[MAX_WINDOWS - 1] = temp;
+                    drag_window_idx = MAX_WINDOWS - 1;
+                }
+                break;
+            }
+        }
+    } else {
+        mouse_button_down = false;
+        drag_window_idx = -1;
+    }
+    
+    graphics_swap_buffers();
+}
+
+uint32_t* get_backbuffer_ptr(void) {
+    return backbuffer;
+}
+
+uint32_t get_screen_width(void) {
+    return boot_info.width;
+}
+
+uint32_t get_screen_height(void) {
+    return boot_info.height;
+}
+
 
 void graphics_swipe_transition(void) {
     if (fb == NULL) return;
@@ -911,7 +1328,7 @@ void draw_mouse_cursor(void) {
             if (pixel_type == 'B') {
                 backbuffer[py * width + px] = 0x000000;
             } else if (pixel_type == 'C') {
-                backbuffer[py * width + px] = 0x00E5FF;
+                backbuffer[py * width + px] = mouse_button_down ? 0xFFFF00 : 0x00E5FF;
             }
         }
     }
@@ -924,6 +1341,20 @@ void graphics_move_mouse(int dx, int dy) {
     if (mouse_x > (int)boot_info.width - 12) mouse_x = boot_info.width - 12;
     if (mouse_y < 0) mouse_y = 0;
     if (mouse_y > (int)boot_info.height - 20) mouse_y = boot_info.height - 20;
+    
+    if (mouse_button_down && drag_window_idx != -1) {
+        windows[drag_window_idx].x += dx;
+        windows[drag_window_idx].y += dy;
+        
+        if (windows[drag_window_idx].x < -windows[drag_window_idx].width + 20)
+            windows[drag_window_idx].x = -windows[drag_window_idx].width + 20;
+        if (windows[drag_window_idx].x > (int)boot_info.width - 20)
+            windows[drag_window_idx].x = (int)boot_info.width - 20;
+        if (windows[drag_window_idx].y < 0)
+            windows[drag_window_idx].y = 0;
+        if (windows[drag_window_idx].y > (int)boot_info.height - 40)
+            windows[drag_window_idx].y = (int)boot_info.height - 40;
+    }
     
     graphics_swap_buffers();
 }
