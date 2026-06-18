@@ -244,6 +244,7 @@ void print_help() {
 int main(void) {
     clear();
     print_help();
+    swap_buffers();
 
     int last_result = 0;
     int has_last_result = 0;
@@ -258,6 +259,7 @@ int main(void) {
             puts("zenith_calc> ");
         }
 
+        swap_buffers();
         int input_len = input(input_buf, sizeof(input_buf));
         if (input_len > 0 && input_buf[input_len - 1] == '\n') {
             input_buf[input_len - 1] = '\0';

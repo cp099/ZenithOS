@@ -4,8 +4,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define CHAR_WIDTH    12
-#define CHAR_HEIGHT   24
+#define CHAR_WIDTH    16
+#define CHAR_HEIGHT   32
 
 #define MARGIN_LEFT   48
 #define MARGIN_TOP    48
@@ -44,6 +44,13 @@ void graphics_update_progress(const char* status, uint32_t percentage);
 void graphics_draw_shutdown(void);
 void graphics_draw_restart(void);
 void graphics_draw_statusbar(void);
+
+void graphics_swap_buffers(void);
+void graphics_swipe_transition(void);
+void draw_rect_alpha(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color, uint8_t alpha);
+void graphics_move_mouse(int dx, int dy);
+void draw_mouse_cursor(void);
+void graphics_toggle_launcher(void);
 
 #endif
 

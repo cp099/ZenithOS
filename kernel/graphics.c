@@ -8,6 +8,18 @@ static volatile uint8_t* fb = NULL;
 static uint32_t terminal_col = 0;
 static uint32_t terminal_row = 0;
 
+static uint32_t backbuffer[1280 * 1024];
+
+static int mouse_x = 0;
+static int mouse_y = 0;
+static uint32_t cursor_saved_bg[12 * 20];
+
+static bool launcher_visible = false;
+static uint32_t launcher_saved_bg[600 * 180];
+
+static void graphics_save_cursor_bg(void);
+static void graphics_restore_cursor_bg(void);
+
 // Color schemes
 #define COLOR_DEFAULT_FG 0x00E0E0E0 // Light Grey
 #define COLOR_DEFAULT_BG 0x000F0F14 // Deep Dark Blue-Black
@@ -64,15 +76,9 @@ void graphics_draw_gradient(uint32_t start_color, uint32_t end_color) {
         }
         uint32_t color = (r << 16) | (g << 8) | b;
         
-        if (boot_info.bpp == 32) {
-            uint32_t* line_fb = (uint32_t*)(fb + y * boot_info.pitch);
-            for (uint32_t x = 0; x < width; x++) {
-                line_fb[x] = color;
-            }
-        } else {
-            for (uint32_t x = 0; x < width; x++) {
-                draw_pixel(x, y, color);
-            }
+        uint32_t* line_bb = &backbuffer[y * width];
+        for (uint32_t x = 0; x < width; x++) {
+            line_bb[x] = color;
         }
     }
 }
@@ -81,6 +87,9 @@ void graphics_init(void) {
     // Copy the BootInfo block written by Stage 2 at 0x7000
     local_memcpy(&boot_info, (const void*)0x7000, sizeof(struct BootInfo));
     fb = (volatile uint8_t*)(uintptr_t)boot_info.framebuffer;
+    
+    mouse_x = boot_info.width / 2;
+    mouse_y = boot_info.height / 2;
     
     // Show splash screen on startup
     graphics_draw_splash();
@@ -102,8 +111,9 @@ void graphics_draw_frame(void) {
     draw_rounded_rect(container_x + 8, container_y + 8, container_w, container_h, 12, 0x050508);
     draw_rounded_rect(container_x + 4, container_y + 4, container_w, container_h, 12, 0x08080C);
     
-    // Draw main console workspace card panel (carbon base)
-    draw_rounded_rect(container_x, container_y, container_w, container_h, 12, 0x07080B);
+    // Draw main console workspace card panel (glassmorphic carbon base)
+    extern void draw_rounded_rect_alpha(int x, int y, int w, int h, int r, uint32_t color, uint8_t alpha);
+    draw_rounded_rect_alpha(container_x, container_y, container_w, container_h, 12, 0x07080B, 180);
     
     // Draw subtle border around the console workspace
     draw_rounded_rect_outline(container_x, container_y, container_w, container_h, 12, 0x2D2E3D);
@@ -124,16 +134,7 @@ void graphics_clear_console(void) {
 
 void draw_pixel(uint32_t x, uint32_t y, uint32_t color) {
     if (x >= boot_info.width || y >= boot_info.height) return;
-    
-    if (boot_info.bpp == 32) {
-        uint32_t* pixel = (uint32_t*)(fb + y * boot_info.pitch + x * 4);
-        *pixel = color;
-    } else if (boot_info.bpp == 24) {
-        uint8_t* pixel = (uint8_t*)(fb + y * boot_info.pitch + x * 3);
-        pixel[0] = color & 0xFF;         // Blue
-        pixel[1] = (color >> 8) & 0xFF;  // Green
-        pixel[2] = (color >> 16) & 0xFF; // Red
-    }
+    backbuffer[y * boot_info.width + x] = color;
 }
 
 void draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color) {
@@ -225,108 +226,55 @@ void draw_rounded_rect_outline(int x, int y, int w, int h, int r, uint32_t color
 }
 
 void graphics_clear(uint32_t color) {
-    if (boot_info.bpp == 32) {
-        uint32_t total_pixels = boot_info.width * boot_info.height;
-        uint32_t* pixel_fb = (uint32_t*)fb;
-        for (uint32_t i = 0; i < total_pixels; i++) {
-            pixel_fb[i] = color;
-        }
-    } else {
-        for (uint32_t y = 0; y < boot_info.height; y++) {
-            for (uint32_t x = 0; x < boot_info.width; x++) {
-                draw_pixel(x, y, color);
-            }
-        }
+    uint32_t total_pixels = boot_info.width * boot_info.height;
+    for (uint32_t i = 0; i < total_pixels; i++) {
+        backbuffer[i] = color;
     }
 }
 
 void draw_char(char c, uint32_t x, uint32_t y, uint32_t fg, uint32_t bg) {
-    if ((uint8_t)c < 32 || (uint8_t)c > 127) c = 32;
-    
-    uint8_t r_fg = (fg >> 16) & 0xFF;
-    uint8_t g_fg = (fg >> 8) & 0xFF;
-    uint8_t b_fg = fg & 0xFF;
-    
-    for (int row = 0; row < CHAR_HEIGHT; row++) {
-        // Map row 0..CHAR_HEIGHT-1 to 0..7 range in fixed point (8.8)
-        uint32_t v_fp = (row * 7 * 256) / (CHAR_HEIGHT - 1);
-        uint32_t y_low = v_fp >> 8;
-        uint32_t y_high = y_low + 1;
-        if (y_high > 7) y_high = 7;
-        uint32_t weight_y = v_fp & 0xFF;
-        
-        for (int col = 0; col < CHAR_WIDTH; col++) {
-            // Map col 0..CHAR_WIDTH-1 to 0..7 range in fixed point (8.8)
-            uint32_t u_fp = (col * 7 * 256) / (CHAR_WIDTH - 1);
-            uint32_t x_low = u_fp >> 8;
-            uint32_t x_high = x_low + 1;
-            if (x_high > 7) x_high = 7;
-            uint32_t weight_x = u_fp & 0xFF;
-            
-            // Read 4 binary pixel values from 8x8 font bitmap
-            uint32_t val_00 = (font_bitmap[(int)c][y_low] & (0x80 >> x_low)) ? 255 : 0;
-            uint32_t val_10 = (font_bitmap[(int)c][y_low] & (0x80 >> x_high)) ? 255 : 0;
-            uint32_t val_01 = (font_bitmap[(int)c][y_high] & (0x80 >> x_low)) ? 255 : 0;
-            uint32_t val_11 = (font_bitmap[(int)c][y_high] & (0x80 >> x_high)) ? 255 : 0;
-            
-            // Bilinear interpolation
-            uint32_t val_0 = val_00 + (((int32_t)val_10 - (int32_t)val_00) * (int32_t)weight_x >> 8);
-            uint32_t val_1 = val_01 + (((int32_t)val_11 - (int32_t)val_01) * (int32_t)weight_x >> 8);
-            uint32_t intensity = val_0 + (((int32_t)val_1 - (int32_t)val_0) * (int32_t)weight_y >> 8);
-            
-            if (intensity > 0) {
-                uint32_t actual_bg = bg;
-                if (bg == 0xFFFFFFFF) {
-                    // Read background from framebuffer
-                    if (boot_info.bpp == 32) {
-                        actual_bg = *(volatile uint32_t*)(fb + (y + row) * boot_info.pitch + (x + col) * 4);
-                    } else {
-                        actual_bg = 0x07080B; // fallback
-                    }
-                }
-                
-                // Blend colors based on intensity
-                uint8_t r_bg = (actual_bg >> 16) & 0xFF;
-                uint8_t g_bg = (actual_bg >> 8) & 0xFF;
-                uint8_t b_bg = actual_bg & 0xFF;
-                
-                uint8_t r = r_bg + (((int32_t)r_fg - (int32_t)r_bg) * (int32_t)intensity >> 8);
-                uint8_t g = g_bg + (((int32_t)g_fg - (int32_t)g_bg) * (int32_t)intensity >> 8);
-                uint8_t b = b_bg + (((int32_t)b_fg - (int32_t)b_bg) * (int32_t)intensity >> 8);
-                
-                draw_pixel(x + col, y + row, (r << 16) | (g << 8) | b);
+    for (uint32_t row_idx = 0; row_idx < 16; row_idx++) {
+        uint8_t row_data = font_bitmap[(uint8_t)c][row_idx];
+        for (uint32_t bit_idx = 0; bit_idx < 8; bit_idx++) {
+            int active = (row_data & (0x80 >> bit_idx)) != 0;
+            if (active) {
+                draw_pixel(x + bit_idx * 2,     y + row_idx * 2,     fg);
+                draw_pixel(x + bit_idx * 2 + 1, y + row_idx * 2,     fg);
+                draw_pixel(x + bit_idx * 2,     y + row_idx * 2 + 1, fg);
+                draw_pixel(x + bit_idx * 2 + 1, y + row_idx * 2 + 1, fg);
             } else if (bg != 0xFFFFFFFF) {
-                draw_pixel(x + col, y + row, bg);
+                draw_pixel(x + bit_idx * 2,     y + row_idx * 2,     bg);
+                draw_pixel(x + bit_idx * 2 + 1, y + row_idx * 2,     bg);
+                draw_pixel(x + bit_idx * 2,     y + row_idx * 2 + 1, bg);
+                draw_pixel(x + bit_idx * 2 + 1, y + row_idx * 2 + 1, bg);
             }
         }
     }
 }
 
 static void graphics_scroll(void) {
-    uint32_t row_bytes = boot_info.pitch;
     uint32_t char_height = CHAR_HEIGHT;
+    uint32_t width = boot_info.width;
     
     uint32_t work_x = MARGIN_LEFT;
     uint32_t work_y = MARGIN_TOP;
     uint32_t work_w = boot_info.width - MARGIN_LEFT - MARGIN_RIGHT;
     uint32_t work_h = boot_info.height - MARGIN_TOP - MARGIN_BOTTOM;
     
-    uint32_t bytes_per_pixel = boot_info.bpp / 8;
-    
-    // Copy only within the terminal workspace margins
+    // Copy only within the terminal workspace margins in the backbuffer
     for (uint32_t y = 0; y < work_h - char_height; y++) {
         uint32_t dst_y = work_y + y;
         uint32_t src_y = work_y + y + char_height;
         
-        uint8_t* dst_ptr = (uint8_t*)(fb + dst_y * row_bytes + work_x * bytes_per_pixel);
-        const uint8_t* src_ptr = (const uint8_t*)(fb + src_y * row_bytes + work_x * bytes_per_pixel);
+        uint32_t* dst_row = &backbuffer[dst_y * width + work_x];
+        uint32_t* src_row = &backbuffer[src_y * width + work_x];
         
-        for (uint32_t i = 0; i < work_w * bytes_per_pixel; i++) {
-            dst_ptr[i] = src_ptr[i];
+        for (uint32_t i = 0; i < work_w; i++) {
+            dst_row[i] = src_row[i];
         }
     }
     
-    // Clear bottom row of console workspace
+    // Clear bottom row of console workspace in the backbuffer
     draw_rect(work_x, work_y + work_h - char_height, work_w, char_height, current_bg);
     
     terminal_row = (work_h / char_height) - 1;
@@ -499,6 +447,7 @@ void graphics_update_progress(const char* status, uint32_t percentage) {
     for (uint32_t i = 0; i < p_len; i++) {
         draw_char(print_str[i], p_x + i * CHAR_WIDTH, box_y + box_h + 17, 0x00E5FF, 0x1B1822);
     }
+    graphics_swap_buffers();
 }
 
 static inline void outb_local(uint16_t port, uint8_t val) {
@@ -555,6 +504,8 @@ void graphics_draw_shutdown(void) {
     for (uint32_t i = 0; i < len2; i++) draw_char(m2[i], x2 + i * CHAR_WIDTH, y2, 0xEF4444, 0x12131A);
     for (uint32_t i = 0; i < len3; i++) draw_char(m3[i], x3 + i * CHAR_WIDTH, y3, 0x10B981, 0x12131A);
     
+    graphics_swap_buffers();
+    
     // Perform QEMU ACPI poweroff
     timer_wait(1000);
     outw_local(0x604, 0x2000);
@@ -602,6 +553,8 @@ void graphics_draw_restart(void) {
     for (uint32_t i = 0; i < len2; i++) draw_char(m2[i], x2 + i * CHAR_WIDTH, y2, 0x00E5FF, 0x12131A);
     for (uint32_t i = 0; i < len3; i++) draw_char(m3[i], x3 + i * CHAR_WIDTH, y3, 0xE0E0E0, 0x12131A);
     
+    graphics_swap_buffers();
+    
     // Reboot via 8042 Keyboard Controller
     timer_wait(1000);
     while (inb_local(0x64) & 0x02);
@@ -632,6 +585,9 @@ static void draw_string_at(const char* str, uint32_t x, uint32_t y, uint32_t fg,
         draw_char(str[i], x + i * CHAR_WIDTH, y, fg, bg);
     }
 }
+
+
+
 
 void graphics_draw_statusbar(void) {
     uint32_t bar_y = boot_info.height - 36;
@@ -684,11 +640,388 @@ void graphics_draw_statusbar(void) {
     for (int i = 0; suffix[i] != '\0'; i++) mem_str[len++] = suffix[i];
     mem_str[len] = '\0';
     
+    // Draw Icons
+    // 1. Clock Icon (circle with hands)
+    int clock_cx = bar_x + 13;
+    int clock_cy = bar_y + 15;
+    draw_circle(clock_cx, clock_cy, 7, 0x00E5FF);
+    draw_pixel(clock_cx, clock_cy, 0x00E5FF);
+    draw_pixel(clock_cx, clock_cy - 1, 0x00E5FF);
+    draw_pixel(clock_cx, clock_cy - 2, 0x00E5FF);
+    draw_pixel(clock_cx, clock_cy - 3, 0x00E5FF);
+    draw_pixel(clock_cx, clock_cy - 4, 0x00E5FF);
+    draw_pixel(clock_cx + 1, clock_cy, 0x00E5FF);
+    draw_pixel(clock_cx + 2, clock_cy, 0x00E5FF);
+    draw_pixel(clock_cx + 3, clock_cy, 0x00E5FF);
+
+    // 2. Tasks Silhouette Icon
+    int task_cx = bar_x + (bar_w / 2) - 80;
+    int task_cy = bar_y + 15;
+    draw_filled_circle(task_cx, task_cy - 3, 3, 0xE2E8F0);
+    draw_rect(task_cx - 5, task_cy + 1, 11, 4, 0xE2E8F0);
+    draw_pixel(task_cx - 6, task_cy + 3, 0xE2E8F0);
+    draw_pixel(task_cx - 6, task_cy + 4, 0xE2E8F0);
+    draw_pixel(task_cx + 6, task_cy + 3, 0xE2E8F0);
+    draw_pixel(task_cx + 6, task_cy + 4, 0xE2E8F0);
+
+    // 3. RAM Icon
+    int ram_cx = bar_x + bar_w - 300;
+    int ram_cy = bar_y + 15;
+    draw_rect(ram_cx - 6, ram_cy - 5, 13, 1, 0x10B981);
+    draw_rect(ram_cx - 6, ram_cy + 5, 13, 1, 0x10B981);
+    draw_rect(ram_cx - 6, ram_cy - 5, 1, 11, 0x10B981);
+    draw_rect(ram_cx + 6, ram_cy - 5, 1, 11, 0x10B981);
+    // Left pins
+    draw_pixel(ram_cx - 8, ram_cy - 3, 0x10B981); draw_pixel(ram_cx - 7, ram_cy - 3, 0x10B981);
+    draw_pixel(ram_cx - 8, ram_cy - 1, 0x10B981); draw_pixel(ram_cx - 7, ram_cy - 1, 0x10B981);
+    draw_pixel(ram_cx - 8, ram_cy + 1, 0x10B981); draw_pixel(ram_cx - 7, ram_cy + 1, 0x10B981);
+    draw_pixel(ram_cx - 8, ram_cy + 3, 0x10B981); draw_pixel(ram_cx - 7, ram_cy + 3, 0x10B981);
+    // Right pins
+    draw_pixel(ram_cx + 7, ram_cy - 3, 0x10B981); draw_pixel(ram_cx + 8, ram_cy - 3, 0x10B981);
+    draw_pixel(ram_cx + 7, ram_cy - 1, 0x10B981); draw_pixel(ram_cx + 8, ram_cy - 1, 0x10B981);
+    draw_pixel(ram_cx + 7, ram_cy + 1, 0x10B981); draw_pixel(ram_cx + 8, ram_cy + 1, 0x10B981);
+    draw_pixel(ram_cx + 7, ram_cy + 3, 0x10B981); draw_pixel(ram_cx + 8, ram_cy + 3, 0x10B981);
+
     // Draw text inside status bar (y = bar_y + 3)
     uint32_t text_y = bar_y + 3;
-    draw_string_at(upt_str, bar_x + 24, text_y, 0x00E5FF, 0x12131A);
+    draw_string_at(upt_str, bar_x + 28, text_y, 0x00E5FF, 0x12131A);
     draw_string_at(task_str, bar_x + (bar_w / 2) - 60, text_y, 0xE2E8F0, 0x12131A);
     draw_string_at(mem_str, bar_x + bar_w - 280, text_y, 0x10B981, 0x12131A);
+    
+    graphics_swap_buffers();
 }
 
+void graphics_swap_buffers(void) {
+    if (fb == NULL) return;
+    
+    // Save background under cursor
+    graphics_save_cursor_bg();
+    
+    // Draw cursor on backbuffer
+    draw_mouse_cursor();
+    
+    // Perform swap (copy backbuffer to physical screen)
+    uint32_t width = boot_info.width;
+    uint32_t height = boot_info.height;
+    uint32_t pitch = boot_info.pitch;
+    
+    if (boot_info.bpp == 32) {
+        for (uint32_t y = 0; y < height; y++) {
+            uint32_t* dest = (uint32_t*)(fb + y * pitch);
+            uint32_t* src = &backbuffer[y * width];
+            for (uint32_t x = 0; x < width; x++) {
+                dest[x] = src[x];
+            }
+        }
+    } else if (boot_info.bpp == 24) {
+        for (uint32_t y = 0; y < height; y++) {
+            uint8_t* dest = (uint8_t*)(fb + y * pitch);
+            uint32_t* src = &backbuffer[y * width];
+            for (uint32_t x = 0; x < width; x++) {
+                uint32_t color = src[x];
+                uint32_t offset = x * 3;
+                dest[offset] = color & 0xFF;
+                dest[offset + 1] = (color >> 8) & 0xFF;
+                dest[offset + 2] = (color >> 16) & 0xFF;
+            }
+        }
+    }
+    
+    // Restore background under cursor on backbuffer so subsequent drawing doesn't overwrite it
+    graphics_restore_cursor_bg();
+}
 
+void graphics_swipe_transition(void) {
+    if (fb == NULL) return;
+    uint32_t width = boot_info.width;
+    uint32_t height = boot_info.height;
+    uint32_t pitch = boot_info.pitch;
+    
+    for (int step = 0; step < 25; step++) {
+        uint32_t x_start = (step * width) / 25;
+        uint32_t x_end = ((step + 1) * width) / 25;
+        if (x_end > width) x_end = width;
+        
+        if (boot_info.bpp == 32) {
+            for (uint32_t y = 0; y < height; y++) {
+                uint32_t* dest = (uint32_t*)(fb + y * pitch);
+                uint32_t* src = &backbuffer[y * width];
+                for (uint32_t x = x_start; x < x_end; x++) {
+                    dest[x] = src[x];
+                }
+            }
+        } else if (boot_info.bpp == 24) {
+            for (uint32_t y = 0; y < height; y++) {
+                uint8_t* dest = (uint8_t*)(fb + y * pitch);
+                uint32_t* src = &backbuffer[y * width];
+                for (uint32_t x = x_start; x < x_end; x++) {
+                    uint32_t color = src[x];
+                    uint32_t offset = x * 3;
+                    dest[offset] = color & 0xFF;
+                    dest[offset + 1] = (color >> 8) & 0xFF;
+                    dest[offset + 2] = (color >> 16) & 0xFF;
+                }
+            }
+        }
+        timer_wait(1);
+    }
+}
+
+void draw_rect_alpha(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color, uint8_t alpha) {
+    uint32_t width = boot_info.width;
+    uint32_t height = boot_info.height;
+    
+    uint8_t r_src = (color >> 16) & 0xFF;
+    uint8_t g_src = (color >> 8) & 0xFF;
+    uint8_t b_src = color & 0xFF;
+    
+    for (uint32_t i = 0; i < h; i++) {
+        uint32_t py = y + i;
+        if (py >= height) continue;
+        for (uint32_t j = 0; j < w; j++) {
+            uint32_t px = x + j;
+            if (px >= width) continue;
+            
+            uint32_t dst_color = backbuffer[py * width + px];
+            uint8_t r_dst = (dst_color >> 16) & 0xFF;
+            uint8_t g_dst = (dst_color >> 8) & 0xFF;
+            uint8_t b_dst = dst_color & 0xFF;
+            
+            uint8_t r_out = (r_src * alpha + r_dst * (255 - alpha)) / 255;
+            uint8_t g_out = (g_src * alpha + g_dst * (255 - alpha)) / 255;
+            uint8_t b_out = (b_src * alpha + b_dst * (255 - alpha)) / 255;
+            
+            backbuffer[py * width + px] = (r_out << 16) | (g_out << 8) | b_out;
+        }
+    }
+}
+
+void draw_rounded_rect_alpha(int x, int y, int w, int h, int r, uint32_t color, uint8_t alpha) {
+    uint32_t width = boot_info.width;
+    uint32_t height = boot_info.height;
+    
+    uint8_t r_src = (color >> 16) & 0xFF;
+    uint8_t g_src = (color >> 8) & 0xFF;
+    uint8_t b_src = color & 0xFF;
+    
+    int cx1 = x + r, cy1 = y + r;
+    int cx2 = x + w - r - 1, cy2 = y + r;
+    int cx3 = x + r, cy3 = y + h - r - 1;
+    int cx4 = x + w - r - 1, cy4 = y + h - r - 1;
+    
+    for (int py = y; py < y + h; py++) {
+        if (py < 0 || py >= (int)height) continue;
+        for (int px = x; px < x + w; px++) {
+            if (px < 0 || px >= (int)width) continue;
+            
+            bool draw = true;
+            if (px < cx1 && py < cy1) {
+                if ((px - cx1)*(px - cx1) + (py - cy1)*(py - cy1) > r*r) draw = false;
+            } else if (px > cx2 && py < cy2) {
+                if ((px - cx2)*(px - cx2) + (py - cy2)*(py - cy2) > r*r) draw = false;
+            } else if (px < cx3 && py > cy3) {
+                if ((px - cx3)*(px - cx3) + (py - cy3)*(py - cy3) > r*r) draw = false;
+            } else if (px > cx4 && py > cy4) {
+                if ((px - cx4)*(px - cx4) + (py - cy4)*(py - cy4) > r*r) draw = false;
+            }
+            
+            if (draw) {
+                uint32_t dst_color = backbuffer[py * width + px];
+                uint8_t r_dst = (dst_color >> 16) & 0xFF;
+                uint8_t g_dst = (dst_color >> 8) & 0xFF;
+                uint8_t b_dst = dst_color & 0xFF;
+                
+                uint8_t r_out = (r_src * alpha + r_dst * (255 - alpha)) / 255;
+                uint8_t g_out = (g_src * alpha + g_dst * (255 - alpha)) / 255;
+                uint8_t b_out = (b_src * alpha + b_dst * (255 - alpha)) / 255;
+                
+                backbuffer[py * width + px] = (r_out << 16) | (g_out << 8) | b_out;
+            }
+        }
+    }
+}
+
+static void graphics_save_cursor_bg(void) {
+    uint32_t width = boot_info.width;
+    uint32_t height = boot_info.height;
+    
+    for (int y = 0; y < 20; y++) {
+        int py = mouse_y + y;
+        for (int x = 0; x < 12; x++) {
+            int px = mouse_x + x;
+            if (px >= 0 && px < (int)width && py >= 0 && py < (int)height) {
+                cursor_saved_bg[y * 12 + x] = backbuffer[py * width + px];
+            } else {
+                cursor_saved_bg[y * 12 + x] = current_bg;
+            }
+        }
+    }
+}
+
+static void graphics_restore_cursor_bg(void) {
+    uint32_t width = boot_info.width;
+    uint32_t height = boot_info.height;
+    
+    for (int y = 0; y < 20; y++) {
+        int py = mouse_y + y;
+        for (int x = 0; x < 12; x++) {
+            int px = mouse_x + x;
+            if (px >= 0 && px < (int)width && py >= 0 && py < (int)height) {
+                backbuffer[py * width + px] = cursor_saved_bg[y * 12 + x];
+            }
+        }
+    }
+}
+
+void draw_mouse_cursor(void) {
+    static const char* mouse_cursor[20] = {
+        "B           ",
+        "BB          ",
+        "BCB         ",
+        "BCCB        ",
+        "BCCCB       ",
+        "BCCCCB      ",
+        "BCCCCCB     ",
+        "BCCCCCCB    ",
+        "BCCCCCCB    ",
+        "BCCBBBBBB   ",
+        "BCB  BCB    ",
+        "BB   BCB    ",
+        "     BCB    ",
+        "      B     ",
+        "            ",
+        "            ",
+        "            ",
+        "            ",
+        "            ",
+        "            "
+    };
+    
+    uint32_t width = boot_info.width;
+    uint32_t height = boot_info.height;
+    
+    for (int y = 0; y < 20; y++) {
+        int py = mouse_y + y;
+        if (py < 0 || py >= (int)height) continue;
+        for (int x = 0; x < 12; x++) {
+            int px = mouse_x + x;
+            if (px < 0 || px >= (int)width) continue;
+            
+            char pixel_type = mouse_cursor[y][x];
+            if (pixel_type == 'B') {
+                backbuffer[py * width + px] = 0x000000;
+            } else if (pixel_type == 'C') {
+                backbuffer[py * width + px] = 0x00E5FF;
+            }
+        }
+    }
+}
+
+void graphics_move_mouse(int dx, int dy) {
+    mouse_x += dx;
+    mouse_y += dy;
+    if (mouse_x < 0) mouse_x = 0;
+    if (mouse_x > (int)boot_info.width - 12) mouse_x = boot_info.width - 12;
+    if (mouse_y < 0) mouse_y = 0;
+    if (mouse_y > (int)boot_info.height - 20) mouse_y = boot_info.height - 20;
+    
+    graphics_swap_buffers();
+}
+
+static void draw_launcher_menu_at(int lx, int ly) {
+    draw_rounded_rect_alpha(lx, ly, 600, 180, 16, 0x12131A, 220);
+    draw_rounded_rect_outline(lx, ly, 600, 180, 16, 0x00E5FF);
+    
+    draw_string_at("ZENITH SYSTEM LAUNCHER", lx + 180, ly + 15, 0x00E5FF, 0xFFFFFFFF);
+    
+    int card_w = 160;
+    int card_h = 100;
+    int card_y = ly + 50;
+    
+    // Card 1: Shell
+    int c1_x = lx + 30;
+    draw_rounded_rect(c1_x, card_y, card_w, card_h, 8, 0x1B1822);
+    draw_rounded_rect_outline(c1_x, card_y, card_w, card_h, 8, 0x2D2E3D);
+    draw_pixel(c1_x + 30, card_y + 20, 0x00E5FF);
+    draw_pixel(c1_x + 31, card_y + 21, 0x00E5FF);
+    draw_pixel(c1_x + 32, card_y + 22, 0x00E5FF);
+    draw_pixel(c1_x + 31, card_y + 23, 0x00E5FF);
+    draw_pixel(c1_x + 30, card_y + 24, 0x00E5FF);
+    draw_rect(c1_x + 36, card_y + 24, 8, 2, 0x00E5FF);
+    draw_string_at("sh.bin", c1_x + (card_w - 6 * CHAR_WIDTH)/2, card_y + 60, 0xE2E8F0, 0xFFFFFFFF);
+    
+    // Card 2: Calc
+    int c2_x = lx + 220;
+    draw_rounded_rect(c2_x, card_y, card_w, card_h, 8, 0x1B1822);
+    draw_rounded_rect_outline(c2_x, card_y, card_w, card_h, 8, 0x2D2E3D);
+    draw_rect(c2_x + 30, card_y + 22, 6, 2, 0x10B981);
+    draw_rect(c2_x + 32, card_y + 20, 2, 6, 0x10B981);
+    draw_rect(c2_x + 44, card_y + 21, 6, 2, 0x10B981);
+    draw_rect(c2_x + 44, card_y + 24, 6, 2, 0x10B981);
+    draw_string_at("calc.bin", c2_x + (card_w - 8 * CHAR_WIDTH)/2, card_y + 60, 0xE2E8F0, 0xFFFFFFFF);
+    
+    // Card 3: Blaster
+    int c3_x = lx + 410;
+    draw_rounded_rect(c3_x, card_y, card_w, card_h, 8, 0x1B1822);
+    draw_rounded_rect_outline(c3_x, card_y, card_w, card_h, 8, 0x2D2E3D);
+    draw_pixel(c3_x + 35, card_y + 18, 0xEF4444);
+    draw_rect(c3_x + 34, card_y + 19, 3, 4, 0xE2E8F0);
+    draw_rect(c3_x + 32, card_y + 22, 7, 2, 0xE2E8F0);
+    draw_pixel(c3_x + 31, card_y + 24, 0x00E5FF);
+    draw_pixel(c3_x + 39, card_y + 24, 0x00E5FF);
+    draw_string_at("blaster", c3_x + (card_w - 7 * CHAR_WIDTH)/2, card_y + 60, 0xE2E8F0, 0xFFFFFFFF);
+}
+
+void graphics_toggle_launcher(void) {
+    uint32_t width = boot_info.width;
+    uint32_t height = boot_info.height;
+    
+    int target_x = (width - 600) / 2;
+    int target_y = height - 36 - 180 - 10;
+    
+    if (!launcher_visible) {
+        for (int y = 0; y < 180; y++) {
+            int py = target_y + y;
+            for (int x = 0; x < 600; x++) {
+                int px = target_x + x;
+                launcher_saved_bg[y * 600 + x] = backbuffer[py * width + px];
+            }
+        }
+        
+        launcher_visible = true;
+        
+        for (int step = 1; step <= 10; step++) {
+            for (int y = 0; y < 180; y++) {
+                int py = target_y + y;
+                for (int x = 0; x < 600; x++) {
+                    int px = target_x + x;
+                    backbuffer[py * width + px] = launcher_saved_bg[y * 600 + x];
+                }
+            }
+            
+            int current_y = height - ((height - target_y) * step) / 10;
+            draw_launcher_menu_at(target_x, current_y);
+            graphics_swap_buffers();
+            timer_wait(2);
+        }
+    } else {
+        for (int step = 9; step >= 0; step--) {
+            for (int y = 0; y < 180; y++) {
+                int py = target_y + y;
+                for (int x = 0; x < 600; x++) {
+                    int px = target_x + x;
+                    backbuffer[py * width + px] = launcher_saved_bg[y * 600 + x];
+                }
+            }
+            
+            int current_y = height - ((height - target_y) * step) / 10;
+            if (step > 0) {
+                draw_launcher_menu_at(target_x, current_y);
+            }
+            graphics_swap_buffers();
+            timer_wait(2);
+        }
+        
+        launcher_visible = false;
+    }
+}

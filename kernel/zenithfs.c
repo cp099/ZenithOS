@@ -170,10 +170,26 @@ void zenithfs_list_directory(void) {
                 print_string_default(dirents[d].name);
                 print_string_default("  [Inode ");
                 
-                // Print Inode Number as character
-                char ibuf[4];
-                ibuf[0] = '0' + (dirents[d].inode_num % 10);
-                ibuf[1] = '\n'; ibuf[2] = '\0';
+                // Print Inode Number correctly
+                uint32_t val = dirents[d].inode_num;
+                char ibuf[12];
+                int idx = 0;
+                if (val == 0) {
+                    ibuf[idx++] = '0';
+                } else {
+                    char temp[12];
+                    int t_idx = 0;
+                    while (val > 0) {
+                        temp[t_idx++] = '0' + (val % 10);
+                        val /= 10;
+                    }
+                    while (t_idx > 0) {
+                        ibuf[idx++] = temp[--t_idx];
+                    }
+                }
+                ibuf[idx++] = ']';
+                ibuf[idx++] = '\n';
+                ibuf[idx] = '\0';
                 print_string_default(ibuf);
             }
         }
@@ -282,6 +298,243 @@ int32_t zenithfs_get_file_size(const char* filename) {
     if (!read_inode(target_inode_num, &file_inode)) return -1;
     
     return (int32_t)file_inode.size;
+}
+
+static void delete_file_if_exists(const char* filename) {
+    zfs_inode_t root_inode;
+    if (!read_inode(0, &root_inode)) return;
+    
+    uint8_t sector_buf[512];
+    for (uint32_t i = 0; i < 12; i++) {
+        if (root_inode.direct[i] == 0) break;
+        
+        ata_read_sectors(root_inode.direct[i], 1, sector_buf);
+        zfs_dirent_t* dirents = (zfs_dirent_t*)sector_buf;
+        
+        for (int d = 0; d < 8; d++) {
+            if (dirents[d].inode_num != 0 && local_strcmp(dirents[d].name, filename) == 0) {
+                uint32_t inode_num = dirents[d].inode_num;
+                zfs_inode_t file_inode;
+                if (read_inode(inode_num, &file_inode)) {
+                    // Free blocks in block bitmap
+                    uint8_t block_bitmap[512];
+                    ata_read_sectors(sb.block_bitmap_block, 1, block_bitmap);
+                    
+                    // Free direct blocks
+                    for (uint32_t b = 0; b < 12; b++) {
+                        uint32_t blk = file_inode.direct[b];
+                        if (blk != 0 && blk < 4096) {
+                            block_bitmap[blk / 8] &= ~(1 << (blk % 8));
+                        }
+                    }
+                    
+                    // Free indirect block and its pointed blocks
+                    if (file_inode.indirect != 0 && file_inode.indirect < 4096) {
+                        uint32_t indirect_block[128];
+                        ata_read_sectors(file_inode.indirect, 1, (uint8_t*)indirect_block);
+                        for (uint32_t b = 0; b < 128; b++) {
+                            uint32_t blk = indirect_block[b];
+                            if (blk != 0 && blk < 4096) {
+                                block_bitmap[blk / 8] &= ~(1 << (blk % 8));
+                            }
+                        }
+                        // Free the indirect block itself
+                        uint32_t blk = file_inode.indirect;
+                        block_bitmap[blk / 8] &= ~(1 << (blk % 8));
+                    }
+                    
+                    // Write back block bitmap
+                    ata_write_sectors(sb.block_bitmap_block, 1, block_bitmap);
+                    
+                    // Free inode in inode bitmap
+                    uint8_t inode_bitmap[512];
+                    ata_read_sectors(sb.inode_bitmap_block, 1, inode_bitmap);
+                    inode_bitmap[inode_num / 8] &= ~(1 << (inode_num % 8));
+                    ata_write_sectors(sb.inode_bitmap_block, 1, inode_bitmap);
+                    
+                    // Clear inode table entry
+                    local_memset(&file_inode, 0, sizeof(zfs_inode_t));
+                    write_inode(inode_num, &file_inode);
+                }
+                
+                // Clear directory entry
+                dirents[d].inode_num = 0;
+                local_memset(dirents[d].name, 0, ZFS_MAX_FILENAME);
+                ata_write_sectors(root_inode.direct[i], 1, sector_buf);
+                
+                // Decrease root inode size
+                if (read_inode(0, &root_inode)) {
+                    if (root_inode.size >= 64) {
+                        root_inode.size -= 64;
+                        write_inode(0, &root_inode);
+                    }
+                }
+                return;
+            }
+        }
+    }
+}
+
+static int get_free_inode(void) {
+    uint8_t bitmap[512];
+    ata_read_sectors(sb.inode_bitmap_block, 1, bitmap);
+    for (uint32_t i = 0; i < sb.num_inodes; i++) {
+        uint32_t byte_idx = i / 8;
+        uint32_t bit_idx = i % 8;
+        if (!(bitmap[byte_idx] & (1 << bit_idx))) {
+            bitmap[byte_idx] |= (1 << bit_idx);
+            ata_write_sectors(sb.inode_bitmap_block, 1, bitmap);
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static int get_free_blocks(uint32_t* blocks, uint32_t count) {
+    uint8_t bitmap[512];
+    ata_read_sectors(sb.block_bitmap_block, 1, bitmap);
+    uint32_t found = 0;
+    uint32_t limit = sb.num_blocks < 4096 ? sb.num_blocks : 4096;
+    for (uint32_t i = 12; i < limit; i++) {
+        uint32_t byte_idx = i / 8;
+        uint32_t bit_idx = i % 8;
+        if (!(bitmap[byte_idx] & (1 << bit_idx))) {
+            bitmap[byte_idx] |= (1 << bit_idx);
+            blocks[found++] = i;
+            if (found == count) {
+                ata_write_sectors(sb.block_bitmap_block, 1, bitmap);
+                return 0; // Success
+            }
+        }
+    }
+    return -1; // Out of blocks
+}
+
+int32_t zenithfs_write_file(const char* filename, const uint8_t* buffer, uint32_t size) {
+    if (!mounted) return -1;
+    if (size > 140 * 512) return -1; // Max size supported (70KB)
+    
+    // 1. Delete if it exists to reuse/overwrite cleanly
+    delete_file_if_exists(filename);
+    
+    // 2. Calculate blocks needed
+    uint32_t blocks_needed = (size + 511) / 512;
+    uint32_t total_blocks_to_allocate = blocks_needed;
+    if (blocks_needed > 12) {
+        total_blocks_to_allocate += 1;
+    }
+    
+    // 3. Find a free inode
+    int inode_num = get_free_inode();
+    if (inode_num < 0) return -1;
+    
+    // 4. Find free blocks
+    uint32_t allocated_blocks[141];
+    if (total_blocks_to_allocate > 0) {
+        if (get_free_blocks(allocated_blocks, total_blocks_to_allocate) < 0) {
+            // Rollback inode allocation
+            uint8_t inode_bitmap[512];
+            ata_read_sectors(sb.inode_bitmap_block, 1, inode_bitmap);
+            inode_bitmap[inode_num / 8] &= ~(1 << (inode_num % 8));
+            ata_write_sectors(sb.inode_bitmap_block, 1, inode_bitmap);
+            return -1;
+        }
+    }
+    
+    // 5. Write data to blocks
+    for (uint32_t i = 0; i < blocks_needed; i++) {
+        uint32_t block = allocated_blocks[i];
+        uint8_t chunk[512];
+        local_memset(chunk, 0, 512);
+        
+        uint32_t bytes_to_copy = size - (i * 512);
+        if (bytes_to_copy > 512) bytes_to_copy = 512;
+        local_memcpy(chunk, buffer + (i * 512), bytes_to_copy);
+        
+        ata_write_sectors(block, 1, chunk);
+    }
+    
+    // 6. Handle indirect block if needed
+    uint32_t indirect_block_num = 0;
+    if (blocks_needed > 12) {
+        indirect_block_num = allocated_blocks[total_blocks_to_allocate - 1];
+        uint32_t indirect_ptrs[128];
+        local_memset(indirect_ptrs, 0, sizeof(indirect_ptrs));
+        
+        for (uint32_t i = 12; i < blocks_needed; i++) {
+            indirect_ptrs[i - 12] = allocated_blocks[i];
+        }
+        
+        ata_write_sectors(indirect_block_num, 1, (uint8_t*)indirect_ptrs);
+    }
+    
+    // 7. Write inode
+    zfs_inode_t inode;
+    local_memset(&inode, 0, sizeof(zfs_inode_t));
+    inode.mode = ZFS_TYPE_FILE;
+    inode.size = size;
+    inode.blocks_count = total_blocks_to_allocate;
+    for (uint32_t i = 0; i < 12; i++) {
+        if (i < blocks_needed) {
+            inode.direct[i] = allocated_blocks[i];
+        } else {
+            inode.direct[i] = 0;
+        }
+    }
+    inode.indirect = indirect_block_num;
+    write_inode(inode_num, &inode);
+    
+    // 8. Add directory entry
+    zfs_inode_t root_inode;
+    if (!read_inode(0, &root_inode)) return -1;
+    
+    bool added = false;
+    uint8_t sector_buf[512];
+    for (uint32_t i = 0; i < 12; i++) {
+        if (root_inode.direct[i] == 0) break;
+        
+        ata_read_sectors(root_inode.direct[i], 1, sector_buf);
+        zfs_dirent_t* dirents = (zfs_dirent_t*)sector_buf;
+        
+        for (int d = 0; d < 8; d++) {
+            if (dirents[d].inode_num == 0) {
+                local_memset(dirents[d].name, 0, ZFS_MAX_FILENAME);
+                local_strcpy(dirents[d].name, filename);
+                dirents[d].inode_num = inode_num;
+                ata_write_sectors(root_inode.direct[i], 1, sector_buf);
+                added = true;
+                break;
+            }
+        }
+        if (added) break;
+    }
+    
+    if (!added) {
+        // Root directory full! Reclaim everything
+        // (Free inode)
+        uint8_t inode_bitmap[512];
+        ata_read_sectors(sb.inode_bitmap_block, 1, inode_bitmap);
+        inode_bitmap[inode_num / 8] &= ~(1 << (inode_num % 8));
+        ata_write_sectors(sb.inode_bitmap_block, 1, inode_bitmap);
+        
+        // (Free blocks)
+        uint8_t block_bitmap[512];
+        ata_read_sectors(sb.block_bitmap_block, 1, block_bitmap);
+        for (uint32_t i = 0; i < total_blocks_to_allocate; i++) {
+            uint32_t blk = allocated_blocks[i];
+            block_bitmap[blk / 8] &= ~(1 << (blk % 8));
+        }
+        ata_write_sectors(sb.block_bitmap_block, 1, block_bitmap);
+        return -1;
+    }
+    
+    // 9. Update root directory inode size
+    if (read_inode(0, &root_inode)) {
+        root_inode.size += 64;
+        write_inode(0, &root_inode);
+    }
+    
+    return (int32_t)size;
 }
 
 

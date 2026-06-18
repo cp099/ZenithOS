@@ -418,6 +418,7 @@ void show_title_screen() {
     set_cursor(23, 29);
     puts(":: Press any key to pilot ship ::");
 
+    swap_buffers();
     getchar();
     clear();
 }
@@ -492,6 +493,7 @@ int main(void) {
             update_bombs();
             check_collisions();
             draw_entities();
+            swap_buffers();
 
             int sleep_ticks = 7 - (player.wave - 1);
             if (sleep_ticks < 3) sleep_ticks = 3;
@@ -516,6 +518,7 @@ int main(void) {
         set_cursor(18, 23);
         puts("=============================================\n");
         
+        swap_buffers();
         sleep(50);
         getchar_nonblock();
         

@@ -58,4 +58,7 @@ int32_t zenithfs_get_file_size(const char* filename);
 // Print all filenames in root directory to console
 void zenithfs_list_directory(void);
 
+// Write entire file content to disk (returns bytes written, or -1 on error)
+int32_t zenithfs_write_file(const char* filename, const uint8_t* buffer, uint32_t size);
+
 #endif

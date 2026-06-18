@@ -21,6 +21,8 @@ typedef struct Task {
     uint32_t sleep_ticks;
     struct Task* parent;
     int exit_code;
+    uint32_t user_esp;
+    uint32_t start_tick;
     struct Task* next;
 } Task;
 
@@ -28,6 +30,7 @@ typedef struct TaskInfo {
     uint32_t id;
     uint32_t state;
     uint32_t mem_size_kb;
+    uint32_t uptime;
 } TaskInfo;
 
 void scheduler_init(void);

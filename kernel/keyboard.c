@@ -132,6 +132,40 @@ static void keyboard_callback(registers_t* regs) {
         } else if (scancode == 0x3A) {
             caps_lock = !caps_lock; // Toggle Caps Lock
         } else {
+            if (scancode == 0x01) { // Esc key
+                graphics_toggle_launcher();
+                return;
+            }
+
+            if (ctrl_pressed) {
+                if (scancode == 0x48) {      // Up Arrow
+                    graphics_move_mouse(0, -10);
+                    return;
+                } else if (scancode == 0x50) { // Down Arrow
+                    graphics_move_mouse(0, 10);
+                    return;
+                } else if (scancode == 0x4B) { // Left Arrow
+                    graphics_move_mouse(-10, 0);
+                    return;
+                } else if (scancode == 0x4D) { // Right Arrow
+                    graphics_move_mouse(10, 0);
+                    return;
+                }
+            }
+
+            // Check for Ctrl+C
+            if (ctrl_pressed && scancode == 0x2E) {
+                Task* cur = get_current_task();
+                if (cur != NULL && cur->uid != 0) {
+                    cur->state = TASK_DEAD;
+                    if (cur->parent != NULL) {
+                        cur->parent->state = TASK_READY;
+                    }
+                    scheduler_yield();
+                    return; // Should not reach here
+                }
+            }
+
             // Translate standard keypress using XOR for shift and caps lock
             bool upper = shift_pressed ^ caps_lock;
             char c = upper ? kbd_us_upper[scancode] : kbd_us_lower[scancode];
@@ -160,10 +194,15 @@ bool keyboard_haschar(void) {
 }
 
 char keyboard_getchar(void) {
-    while (!buffer_has_data()) {
+    while (1) {
+        __asm__ volatile("cli");
+        if (keyboard_haschar()) {
+            char c = buffer_read();
+            __asm__ volatile("sti");
+            return c;
+        }
         Task* cur = get_current_task();
         cur->state = TASK_BLOCKED_INPUT;
-        scheduler_yield();
+        scheduler_yield(); // scheduler_yield will sti before returning
     }
-    return buffer_read();
 }

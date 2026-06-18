@@ -20,6 +20,9 @@
 #define SYS_SHUTDOWN  12
 #define SYS_GET_TASKS 13
 #define SYS_REBOOT    14
+#define SYS_WRITE_FILE 15
+#define SYS_SWAP_BUFFERS 16
+#define SYS_SWIPE_TRANSITION 17
 
 
 // Initialize syscall gate (registers interrupt 0x80 handler)
@@ -27,5 +30,6 @@ void syscall_init(void);
 
 // Safe pointer verification routine for Ring 3 buffers
 bool syscall_verify_pointer(const void* ptr, uint32_t size);
+bool syscall_verify_string(const char* str, uint32_t max_len);
 
 #endif

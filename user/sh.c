@@ -48,6 +48,10 @@ static void print_help(void) {
     set_color(COLOR_CYAN, COLOR_DARK);
     print("  restart            "); set_color(COLOR_GREY, COLOR_DARK); print("- Reboot the computer\n");
     set_color(COLOR_CYAN, COLOR_DARK);
+    print("  write <f> <t>      "); set_color(COLOR_GREY, COLOR_DARK); print("- Write text string to filename\n");
+    set_color(COLOR_CYAN, COLOR_DARK);
+    print("  top                "); set_color(COLOR_GREY, COLOR_DARK); print("- Dynamic real-time process monitor\n");
+    set_color(COLOR_CYAN, COLOR_DARK);
     print("  <binary.bin>       "); set_color(COLOR_GREY, COLOR_DARK); print("- Load and execute a binary from disk\n");
 }
 
@@ -71,7 +75,10 @@ static void handle_theme(const char* name) {
         print("--- Classic Retro Amber Active ---\n");
     } else {
         print("Unknown theme. Available: default, matrix, ocean, retro\n");
+        swap_buffers();
+        return;
     }
+    swipe_transition();
 }
 
 int main(void) {
@@ -86,6 +93,7 @@ int main(void) {
         set_color(COLOR_PURPLE, COLOR_DARK);
         print("zenith$ ");
         set_color(COLOR_WHITE, COLOR_DARK);
+        swap_buffers();
 
         // Read command line
         int len = read(input, sizeof(input));
@@ -98,6 +106,9 @@ int main(void) {
         if (input[len - 1] == '\n') {
             input[len - 1] = '\0';
         }
+
+        char orig_input[128];
+        strcpy(orig_input, input);
 
         // Tokenize input
         char* cmd = strtok(input, " ");
@@ -225,6 +236,101 @@ int main(void) {
                 }
             }
         }
+        // write command
+        else if (strcmp(cmd, "write") == 0) {
+            char* filename = strtok(NULL, " ");
+            char* text = strtok(NULL, ""); // Get all remaining characters including spaces
+            if (filename == NULL || text == NULL) {
+                set_color(0x00FF3333, COLOR_DARK);
+                print("Usage: write <filename> <text>\n");
+                set_color(COLOR_WHITE, COLOR_DARK);
+            } else {
+                int res = write_file(filename, text, strlen(text));
+                if (res < 0) {
+                    set_color(0x00FF3333, COLOR_DARK);
+                    print("Error: Failed to write to file.\n");
+                    set_color(COLOR_WHITE, COLOR_DARK);
+                } else {
+                    print("Successfully wrote ");
+                    print(itoa(res, 10));
+                    print(" bytes to ");
+                    print(filename);
+                    print("\n");
+                }
+            }
+        }
+        // top command
+        else if (strcmp(cmd, "top") == 0) {
+            clear_screen();
+            while (1) {
+                char c = getchar_nonblock();
+                if (c == 'q' || c == 'Q') {
+                    break;
+                }
+                
+                set_cursor(0, 0);
+                
+                set_color(COLOR_YELLOW, COLOR_DARK);
+                print("====================================================\n");
+                print("           ZenithOS Dynamic Process Monitor         \n");
+                print("====================================================\n");
+                set_color(COLOR_CYAN, COLOR_DARK);
+                print("ID    STATUS           MEMORY       UPTIME (Ticks)  \n");
+                print("----------------------------------------------------\n");
+                set_color(COLOR_WHITE, COLOR_DARK);
+                
+                TaskInfo tasks[16];
+                int num_tasks = get_tasks(tasks, 16);
+                if (num_tasks < 0) {
+                    print("Failed to retrieve task listing.\n");
+                } else {
+                    for (int i = 0; i < num_tasks; i++) {
+                        // Print ID
+                        print(itoa(tasks[i].id, 10));
+                        int id_len = strlen(itoa(tasks[i].id, 10));
+                        for (int j = id_len; j < 6; j++) print(" ");
+                        
+                        // Print Status
+                        const char* state_str = "UNKNOWN";
+                        if (tasks[i].state == 0) state_str = "READY";
+                        else if (tasks[i].state == 1) state_str = "RUNNING";
+                        else if (tasks[i].state == 2) state_str = "SLEEPING";
+                        else if (tasks[i].state == 3) state_str = "DEAD";
+                        else if (tasks[i].state == 4) state_str = "BLOCKED";
+                        else if (tasks[i].state == 5) state_str = "BLOCKED_INPUT";
+                        
+                        print(state_str);
+                        int state_len = strlen(state_str);
+                        for (int j = state_len; j < 17; j++) print(" ");
+                        
+                        // Print Memory
+                        if (tasks[i].mem_size_kb == 0) {
+                            print("0 KB (Kernel)");
+                            for (int j = 13; j < 13; j++) print(" ");
+                        } else {
+                            print(itoa(tasks[i].mem_size_kb, 10));
+                            print(" KB");
+                            int mem_len = strlen(itoa(tasks[i].mem_size_kb, 10)) + 3;
+                            for (int j = mem_len; j < 13; j++) print(" ");
+                        }
+                        
+                        // Print Uptime
+                        print(itoa(tasks[i].uptime, 10));
+                        print("\n");
+                    }
+                }
+                
+                // Print prompt to exit
+                set_color(COLOR_PURPLE, COLOR_DARK);
+                print("\nPress 'q' to exit dynamic process monitor.\n");
+                set_color(COLOR_WHITE, COLOR_DARK);
+                
+                swap_buffers();
+                sleep(100); // Sleep 1 second (100 PIT ticks)
+            }
+            clear_screen();
+            print_banner();
+        }
         // 8. Shutdown command
         else if (strcmp(cmd, "shutdown") == 0) {
             print("Initiating system shutdown...\n");
@@ -239,7 +345,7 @@ int main(void) {
         else {
             // Attempt to load and run external program from disk
             print("Loading process "); print(cmd); print("...\n");
-            int exec_res = exec(cmd);
+            int exec_res = exec(orig_input);
             if (exec_res < 0) {
                 set_color(0x00FF3333, COLOR_DARK);
                 print("Unknown command or binary: '");
@@ -251,6 +357,7 @@ int main(void) {
             // unless the process completes and control returns. But exec resets memory,
             // so we actually restart or reboot if the program exit syscall is triggered.
         }
+        swap_buffers();
         print("\n");
     }
 

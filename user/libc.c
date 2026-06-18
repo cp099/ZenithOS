@@ -74,11 +74,37 @@ int read_file(const char* filename, char* buffer) {
     return result;
 }
 
+int write_file(const char* filename, const char* buffer, int size) {
+    int result;
+    __asm__ volatile(
+        "int $0x80"
+        : "=a"(result)
+        : "a"(15), "b"(filename), "c"(buffer), "d"(size)
+    );
+    return result;
+}
+
 void clear_screen(void) {
     __asm__ volatile(
         "int $0x80"
         :
         : "a"(8)
+    );
+}
+
+void swap_buffers(void) {
+    __asm__ volatile(
+        "int $0x80"
+        :
+        : "a"(16)
+    );
+}
+
+void swipe_transition(void) {
+    __asm__ volatile(
+        "int $0x80"
+        :
+        : "a"(17)
     );
 }
 
@@ -115,6 +141,12 @@ void* memcpy(void* dest, const void* src, size_t len) {
         *d++ = *s++;
     }
     return dest;
+}
+
+char* strcpy(char* dest, const char* src) {
+    char* temp = dest;
+    while ((*dest++ = *src++));
+    return temp;
 }
 
 // String tokenizer (strtok) using a static token pointer

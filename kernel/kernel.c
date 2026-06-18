@@ -240,6 +240,7 @@ __attribute__((section(".text.boot"))) void kernel_main(void) {
         // Draw the window manager frame and console workspace
         graphics_draw_frame();
         graphics_clear_console();
+        graphics_swap_buffers();
         
         serial_print("  [+] Swapping CPU context to sh.bin in Ring 3...\n");
         enter_ring3(0x40000000, 0x40100000);
@@ -258,6 +259,7 @@ __attribute__((section(".text.boot"))) void kernel_main(void) {
         // Draw the window manager frame and console workspace
         graphics_draw_frame();
         graphics_clear_console();
+        graphics_swap_buffers();
         
         enter_ring3((uint32_t)user_program, 0x40100000);
     }
@@ -372,7 +374,8 @@ void enter_ring3(uint32_t entry_point, uint32_t user_stack) {
 }
 
 void user_entry_wrapper(void) {
-    enter_ring3(0x40000000, 0x40100000);
+    Task* cur = get_current_task();
+    enter_ring3(0x40000000, cur->user_esp);
 }
 
 // Stack protector guard symbols

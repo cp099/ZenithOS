@@ -12,7 +12,9 @@ static Task* task_to_reap = NULL;
 
 void reap_dead_tasks(void) {
     if (task_to_reap != NULL) {
-        kfree((void*)(task_to_reap->kstack - 4096));
+        if (task_to_reap->kstack != 0 && task_to_reap->id != 0) {
+            kfree((void*)(task_to_reap->kstack - 4096));
+        }
         kfree(task_to_reap);
         task_to_reap = NULL;
     }
@@ -50,6 +52,8 @@ void scheduler_init(void) {
     boot_task->sleep_ticks = 0;
     boot_task->parent = NULL;
     boot_task->exit_code = 0;
+    boot_task->user_esp = 0;
+    boot_task->start_tick = 0;
     boot_task->next = boot_task; // Circular list
     
     current_task = boot_task;
@@ -72,6 +76,9 @@ Task* task_create(void (*entry)(void), uint32_t flags) {
     new_task->sleep_ticks = 0;
     new_task->parent = NULL;
     new_task->exit_code = 0;
+    new_task->user_esp = 0;
+    extern uint32_t get_ticks(void);
+    new_task->start_tick = get_ticks();
     
     // Set up initial stack frame
     uint32_t* stack = (uint32_t*)new_task->kstack;

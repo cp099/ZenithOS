@@ -62,9 +62,13 @@ typedef struct TaskInfo {
     uint32_t id;
     uint32_t state;
     uint32_t mem_size_kb;
+    uint32_t uptime;
 } TaskInfo;
 
 int get_tasks(TaskInfo* buf, int max_tasks);
+int write_file(const char* filename, const char* buffer, int size);
+void swap_buffers(void);
+void swipe_transition(void);
 
 
 
@@ -73,6 +77,7 @@ int get_tasks(TaskInfo* buf, int max_tasks);
 // --------------------------------------------------------------------------
 int strlen(const char* s);
 int strcmp(const char* s1, const char* s2);
+char* strcpy(char* dest, const char* src);
 void* memset(void* dest, int val, size_t len);
 void* memcpy(void* dest, const void* src, size_t len);
 char* strtok(char* str, const char* delim);
