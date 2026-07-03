@@ -37,5 +37,8 @@ uint32_t vmm_get_kernel_page_dir(void);
 uint32_t vmm_get_allocated_memory_mb(void);
 uint32_t vmm_get_user_mapped_memory_kb(uint32_t* dir);
 
+// Verify if a virtual address range is mapped in the directory
+bool vmm_is_range_mapped(uint32_t* dir, uint32_t virt_addr, uint32_t size);
+
 #endif
 

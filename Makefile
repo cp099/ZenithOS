@@ -90,7 +90,6 @@ $(BOOT_IMG): $(STAGE1) $(STAGE2) $(KERNEL_BIN)
 SH_BIN = $(BUILD_DIR)/sh.bin
 HELLO_BIN = $(BUILD_DIR)/hello.bin
 CALC_BIN = $(BUILD_DIR)/calc.bin
-BLASTER_BIN = $(BUILD_DIR)/blaster.bin
 EXPLOIT_BIN = $(BUILD_DIR)/exploit.bin
 USER_OBJS = $(BUILD_DIR)/crt0.o $(BUILD_DIR)/libc.o
 
@@ -109,9 +108,6 @@ $(BUILD_DIR)/hello.o: user/hello.c user/libc.h
 $(BUILD_DIR)/calc.o: user/calc.c user/libc.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/blaster.o: user/blaster.c user/libc.h
-	$(CC) $(CFLAGS) -c $< -o $@
-
 $(BUILD_DIR)/exploit.o: user/exploit.c user/libc.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -127,16 +123,12 @@ $(CALC_BIN): $(USER_OBJS) $(BUILD_DIR)/calc.o user/linker.ld
 	$(LD) -T user/linker.ld $(BUILD_DIR)/crt0.o $(BUILD_DIR)/calc.o $(BUILD_DIR)/libc.o -o $(BUILD_DIR)/calc.elf
 	$(OBJCOPY) -O binary $(BUILD_DIR)/calc.elf $@
 
-$(BLASTER_BIN): $(USER_OBJS) $(BUILD_DIR)/blaster.o user/linker.ld
-	$(LD) -T user/linker.ld $(BUILD_DIR)/crt0.o $(BUILD_DIR)/blaster.o $(BUILD_DIR)/libc.o -o $(BUILD_DIR)/blaster.elf
-	$(OBJCOPY) -O binary $(BUILD_DIR)/blaster.elf $@
-
 $(EXPLOIT_BIN): $(USER_OBJS) $(BUILD_DIR)/exploit.o user/linker.ld
 	$(LD) -T user/linker.ld $(BUILD_DIR)/crt0.o $(BUILD_DIR)/exploit.o $(BUILD_DIR)/libc.o -o $(BUILD_DIR)/exploit.elf
 	$(OBJCOPY) -O binary $(BUILD_DIR)/exploit.elf $@
 
 # Create ZenithFS storage image and populate it with files
-$(DISK_ZFS): $(SH_BIN) $(HELLO_BIN) $(CALC_BIN) $(BLASTER_BIN) $(EXPLOIT_BIN)
+$(DISK_ZFS): $(SH_BIN) $(HELLO_BIN) $(CALC_BIN) $(EXPLOIT_BIN)
 	@echo "Creating and formatting ZenithFS storage image..."
 	python3 zfs_tool.py $(DISK_ZFS) format
 	@echo "Hello from ZenithFS File System!" > $(BUILD_DIR)/hello.txt
@@ -144,13 +136,11 @@ $(DISK_ZFS): $(SH_BIN) $(HELLO_BIN) $(CALC_BIN) $(BLASTER_BIN) $(EXPLOIT_BIN)
 	python3 zfs_tool.py $(DISK_ZFS) add $(SH_BIN) sh.bin
 	python3 zfs_tool.py $(DISK_ZFS) add $(HELLO_BIN) hello.bin
 	python3 zfs_tool.py $(DISK_ZFS) add $(CALC_BIN) calc.bin
-	python3 zfs_tool.py $(DISK_ZFS) add $(BLASTER_BIN) blaster.bin
 	python3 zfs_tool.py $(DISK_ZFS) add $(EXPLOIT_BIN) exploit.bin
 
 
-# Run in QEMU Emulator
 run: all
-	qemu-system-i386 -drive format=raw,if=floppy,file=$(BOOT_IMG) -drive format=raw,if=ide,index=1,media=disk,file=$(DISK_ZFS) -vga std -display cocoa,zoom-to-fit=on -serial stdio
+	qemu-system-i386 -drive format=raw,if=floppy,file=$(BOOT_IMG) -drive format=raw,if=ide,index=1,media=disk,file=$(DISK_ZFS) -vga std -display cocoa -serial stdio
 
 # Clean build artifacts
 clean:

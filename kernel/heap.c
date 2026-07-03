@@ -2,7 +2,7 @@
 #include <stdbool.h>
 
 #define HEAP_START 0xC00000
-#define HEAP_SIZE  0x400000 // 4MB
+#define HEAP_SIZE  0x1000000 // 16MB
 
 struct Block {
     size_t size;
@@ -17,6 +17,7 @@ void heap_init(void) {
     free_list->is_free = true;
     free_list->next = NULL;
 }
+
 
 void* kmalloc(size_t size) {
     // Align size to 4 bytes

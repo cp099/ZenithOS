@@ -20,6 +20,7 @@
 // Forward declarations
 void user_program(void);
 static void enter_ring3(uint32_t entry_point, uint32_t user_stack);
+void keyboard_inject_string(const char* str);
 
 // --------------------------------------------------------------------------
 // COM1 Serial Debugging Driver
@@ -78,18 +79,6 @@ void serial_print_hex(uint32_t val) {
 // Busy-loop delay for boot stages before interrupts are enabled
 static void boot_delay(void) {
     for (volatile int d = 0; d < 12000000; d++);
-}
-
-static void test_task(void) {
-    while (1) {
-        extern void graphics_draw_statusbar(void);
-        graphics_draw_statusbar();
-        
-        Task* cur = get_current_task();
-        cur->state = TASK_SLEEPING;
-        cur->sleep_ticks = 100; // Sleep 1 second
-        scheduler_yield();
-    }
 }
 
 // --------------------------------------------------------------------------
@@ -151,7 +140,7 @@ __attribute__((section(".text.boot"))) void kernel_main(void) {
     graphics_update_progress("Initializing Kernel Heap & Task Scheduler...", 50);
     heap_init();
     scheduler_init();
-    task_create(test_task, 0);
+    // task_create(test_task, 0);
     boot_delay();
     
     // 5. Initialize timer interrupts (PIT at 100Hz)
@@ -201,9 +190,7 @@ __attribute__((section(".text.boot"))) void kernel_main(void) {
         // Update current task CR3 tracking
         get_current_task()->cr3 = (uint32_t)process_dir;
 
-        // Allocate a window for the shell
-        extern void create_window_for_task(struct Task* owner, int w, int h, const char* title);
-        create_window_for_task(get_current_task(), 640, 400, "sh.bin");
+
 
         // Map user pages starting at 0x40000000 in the private directory (with 16KB extra for BSS/padding)
         uint32_t mem_size = (uint32_t)size + 16384;
@@ -246,8 +233,38 @@ __attribute__((section(".text.boot"))) void kernel_main(void) {
         graphics_clear_console();
         graphics_swap_buffers();
         
+        // Construct user stack frame (argc=1, argv=["sh.bin"])
+        uint32_t esp = 0x40100000;
+        const char* sh_name = "sh.bin";
+        uint32_t name_len = 6;
+        esp -= (name_len + 1);
+        char* dest = (char*)esp;
+        for (uint32_t k = 0; k <= name_len; k++) {
+            dest[k] = sh_name[k];
+        }
+        uint32_t sh_name_ptr = esp;
+
+        esp &= ~3;
+
+        esp -= 2 * sizeof(char*);
+        uint32_t* argv_array = (uint32_t*)esp;
+        argv_array[0] = sh_name_ptr;
+        argv_array[1] = 0;
+        uint32_t argv_val = esp;
+
+        esp -= 4;
+        *(uint32_t*)esp = argv_val;
+
+        esp -= 4;
+        *(uint32_t*)esp = 1;
+
+        esp -= 4;
+        *(uint32_t*)esp = 0;
+
+        get_current_task()->user_esp = esp;
+
         serial_print("  [+] Swapping CPU context to sh.bin in Ring 3...\n");
-        enter_ring3(0x40000000, 0x40100000);
+        enter_ring3(0x40000000, esp);
     } else {
         serial_print("  [-] Warning: 'sh.bin' not found on ZenithFS. Falling back to internal user program...\n");
         
@@ -379,6 +396,9 @@ void enter_ring3(uint32_t entry_point, uint32_t user_stack) {
 
 void user_entry_wrapper(void) {
     Task* cur = get_current_task();
+    serial_print("  [+] user_entry_wrapper: cur->user_esp = 0x");
+    serial_print_hex(cur->user_esp);
+    serial_print("\n");
     enter_ring3(0x40000000, cur->user_esp);
 }
 
@@ -387,6 +407,14 @@ uint32_t __stack_chk_guard = 0xDEADC0DE;
 
 void __attribute__((noreturn)) __stack_chk_fail(void) {
     serial_print("\n[CRITICAL SECURITY ALERT] Stack Smashing/Overflow Detected! System halted.\n");
+    Task* cur = get_current_task();
+    if (cur) {
+        serial_print("  Active Task ID: 0x");
+        serial_print_hex(cur->id);
+        serial_print("\n");
+    } else {
+        serial_print("  No active task.\n");
+    }
     print_string_default("\n[SECURITY PANIC] STACK CORRUPTION DETECTED!\n");
     while (1) {
         __asm__ volatile("cli\n\t"

@@ -38,10 +38,10 @@ static void local_memcpy(void* dest, const void* src, size_t len) {
     }
 }
 
-// Allocate a physical frame (above 16MB to avoid kernel overwrite)
+// Allocate a physical frame (above 32MB to avoid kernel overwrite & heap overlap)
 uint32_t pmm_alloc_frame(void) {
-    // Start searching from page index 4096 (16MB mark)
-    for (uint32_t i = 4096; i < TOTAL_PAGES; i++) {
+    // Start searching from page index 8192 (32MB mark)
+    for (uint32_t i = 8192; i < TOTAL_PAGES; i++) {
         if (!bitmap_test(i)) {
             bitmap_set(i);
             return i * PAGE_SIZE;
@@ -136,8 +136,8 @@ void paging_init(void) {
         pmm_bitmap[i] = 0xFFFFFFFF;
     }
     
-    // Free frames from 16MB (page index 4096) up to 128MB
-    for (uint32_t i = 4096; i < TOTAL_PAGES; i++) {
+    // Free frames from 32MB (page index 8192) up to 128MB
+    for (uint32_t i = 8192; i < TOTAL_PAGES; i++) {
         bitmap_clear(i);
     }
     
@@ -208,5 +208,28 @@ uint32_t vmm_get_user_mapped_memory_kb(uint32_t* dir) {
         }
     }
     return pages * 4;
+}
+
+bool vmm_is_range_mapped(uint32_t* dir, uint32_t virt_addr, uint32_t size) {
+    if (dir == NULL) return false;
+    uint32_t start = virt_addr;
+    uint32_t end = start + size;
+    if (end < start) return false; // overflow
+    
+    // Align start to page boundary, but keep end boundary strict
+    for (uint32_t addr = start & 0xFFFFF000; addr < end; addr += 4096) {
+        uint32_t dir_idx = addr >> 22;
+        uint32_t tbl_idx = (addr >> 12) & 0x3FF;
+        
+        if (!(dir[dir_idx] & PAGE_PRESENT)) {
+            return false;
+        }
+        
+        uint32_t* page_table = (uint32_t*)(dir[dir_idx] & 0xFFFFF000);
+        if (!(page_table[tbl_idx] & PAGE_PRESENT)) {
+            return false;
+        }
+    }
+    return true;
 }
 

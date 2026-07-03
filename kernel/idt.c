@@ -1,5 +1,6 @@
 #include "idt.h"
 #include "graphics.h"
+#include "task.h"
 #include <stddef.h>
 
 #define IDT_ENTRIES_COUNT 256
@@ -173,6 +174,18 @@ static void print_error_regs(registers_t* regs) {
     buf[10] = '\n'; buf[11] = '\0';
     print_string_default(buf);
 
+    serial_print("EAX: 0x"); serial_print_hex(regs->eax); serial_print(" ");
+    serial_print("EBX: 0x"); serial_print_hex(regs->ebx); serial_print(" ");
+    serial_print("ECX: 0x"); serial_print_hex(regs->ecx); serial_print(" ");
+    serial_print("EDX: 0x"); serial_print_hex(regs->edx); serial_print("\n");
+    serial_print("ESI: 0x"); serial_print_hex(regs->esi); serial_print(" ");
+    serial_print("EDI: 0x"); serial_print_hex(regs->edi); serial_print(" ");
+    serial_print("ESP: 0x"); serial_print_hex(regs->esp); serial_print(" ");
+    serial_print("EBP: 0x"); serial_print_hex(regs->ebp); serial_print("\n");
+    serial_print("CS:  0x"); serial_print_hex(regs->cs);  serial_print(" ");
+    serial_print("SS:  0x"); serial_print_hex(regs->ss);  serial_print(" ");
+    serial_print("EFL: 0x"); serial_print_hex(regs->eflags); serial_print("\n");
+
     serial_print("EIP: 0x");
     serial_print_hex(regs->eip);
     serial_print("\n");
@@ -193,6 +206,64 @@ static void print_error_regs(registers_t* regs) {
         serial_print("Page Fault Address (CR2): 0x");
         serial_print_hex(cr2);
         serial_print("\n");
+
+        serial_print("Error Code: 0x");
+        serial_print_hex(regs->err_code);
+        serial_print("\n");
+
+        uint32_t cr3;
+        __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+        serial_print("CR3 (Page Directory Phys): 0x");
+        serial_print_hex(cr3);
+        serial_print("\n");
+
+        Task* cur_task = get_current_task();
+        if (cur_task) {
+            serial_print("Active Task ID: 0x");
+            serial_print_hex(cur_task->id);
+            serial_print("\n");
+            serial_print("Active Task CR3: 0x");
+            serial_print_hex(cur_task->cr3);
+            serial_print("\n");
+            serial_print("Active Task user_esp: 0x");
+            serial_print_hex(cur_task->user_esp);
+            serial_print("\n");
+            serial_print("Active Task kstack: 0x");
+            serial_print_hex(cur_task->kstack);
+            serial_print("\n");
+        }
+
+        serial_print("Call Stack (EBP Walk):\n");
+        uint32_t* ebp = (uint32_t*)regs->ebp;
+        // The kernel stacks are allocated on the heap or are at boot stack (0x90000)
+        while (ebp != NULL && (uint32_t)ebp >= 0x10000 && (uint32_t)ebp < 0x1C00000) {
+            uint32_t ret_addr = ebp[1];
+            serial_print("  [EBP ");
+            serial_print_hex((uint32_t)ebp);
+            serial_print("] Return Address: 0x");
+            serial_print_hex(ret_addr);
+            serial_print("\n");
+            ebp = (uint32_t*)ebp[0];
+        }
+
+        uint32_t* dir = (uint32_t*)cr3;
+        uint32_t dir_idx = cr2 >> 22;
+        uint32_t tbl_idx = (cr2 >> 12) & 0x3FF;
+
+        serial_print("PDE Index: 0x");
+        serial_print_hex(dir_idx);
+        serial_print(" PDE Value: 0x");
+        serial_print_hex(dir[dir_idx]);
+        serial_print("\n");
+
+        if (dir[dir_idx] & 0x01) { // present
+            uint32_t* page_table = (uint32_t*)(dir[dir_idx] & 0xFFFFF000);
+            serial_print("PTE Index: 0x");
+            serial_print_hex(tbl_idx);
+            serial_print(" PTE Value: 0x");
+            serial_print_hex(page_table[tbl_idx]);
+            serial_print("\n");
+        }
 
         print_string_default("Page Fault Address (CR2): ");
         num = cr2;
@@ -222,6 +293,23 @@ void handle_interrupt(registers_t* regs) {
         // Unhandled interrupts / exceptions
         if (regs->int_no < 32) {
             print_error_regs(regs);
+            
+            // Check if exception came from Ring 3 (User mode CS is 0x1B)
+            if (regs->cs == 0x1B) {
+                Task* cur = get_current_task();
+                if (cur != NULL && cur->id != 0) {
+                    print_string_default("\n[KERNEL] User task crashed. Terminating process.\n");
+                    serial_print("\n[KERNEL] User task crashed. Terminating process.\n");
+                    
+                    extern void task_terminate(Task* task, int exit_code);
+                    task_terminate(cur, -1);
+                    
+                    extern void scheduler_yield(void);
+                    scheduler_yield();
+                    return; // Should never be reached
+                }
+            }
+
             print_string_default("\nSystem Halted due to unhandled processor exception.");
             __asm__ volatile("cli");
             while (1) {
