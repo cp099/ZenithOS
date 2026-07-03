@@ -1,7 +1,7 @@
 #include "libc.h"
 
 int main(int argc, char** argv) {
-    set_color(0x00FF80FF, 0x000F0F14); // Magenta
+    set_color(COLOR_MAGENTA, COLOR_DARK);
     print("\n********************************************\n");
     print("* Hello from a separate compiled binary!   *\n");
     print("********************************************\n");

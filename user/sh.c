@@ -1,16 +1,5 @@
 #include "libc.h"
 
-// Theme color definitions
-#define COLOR_WHITE   0x00FFFFFF
-#define COLOR_GREY    0x00E0E0E0
-#define COLOR_DARK    0x000F0F14
-#define COLOR_CYAN    0x0000E5FF
-#define COLOR_PURPLE  0x00BF55EC
-#define COLOR_MAGENTA 0x00FF80FF
-#define COLOR_GREEN   0x0033FF33
-#define COLOR_BLACK   0x00000000
-#define COLOR_YELLOW  0x00F7CA18
-#define COLOR_BLUE    0x0022A7F0
 
 static void print_banner(void) {
     set_color(COLOR_PURPLE, COLOR_DARK);
@@ -36,23 +25,17 @@ static void print_help(void) {
     set_color(COLOR_CYAN, COLOR_DARK);
     print("  theme <name>       "); set_color(COLOR_GREY, COLOR_DARK); print("- Switch color theme (default, matrix, ocean, retro)\n");
     set_color(COLOR_CYAN, COLOR_DARK);
-    print("  calc               "); set_color(COLOR_GREY, COLOR_DARK); print("- Launch interactive calculator app\n");
-    set_color(COLOR_CYAN, COLOR_DARK);
-    print("  blaster            "); set_color(COLOR_GREY, COLOR_DARK); print("- Launch space invaders arcade game\n");
-    set_color(COLOR_CYAN, COLOR_DARK);
-    print("  exploit            "); set_color(COLOR_GREY, COLOR_DARK); print("- Launch exploit verification suite\n");
-    set_color(COLOR_CYAN, COLOR_DARK);
-    print("  hello              "); set_color(COLOR_GREY, COLOR_DARK); print("- Launch hello world demonstration\n");
-    set_color(COLOR_CYAN, COLOR_DARK);
-    print("  shutdown           "); set_color(COLOR_GREY, COLOR_DARK); print("- Power off the computer\n");
-    set_color(COLOR_CYAN, COLOR_DARK);
-    print("  restart            "); set_color(COLOR_GREY, COLOR_DARK); print("- Reboot the computer\n");
+    print("  open <app>         "); set_color(COLOR_GREY, COLOR_DARK); print("- Open an app (e.g. calc, hello, exploit)\n");
     set_color(COLOR_CYAN, COLOR_DARK);
     print("  write <f> <t>      "); set_color(COLOR_GREY, COLOR_DARK); print("- Write text string to filename\n");
     set_color(COLOR_CYAN, COLOR_DARK);
     print("  top                "); set_color(COLOR_GREY, COLOR_DARK); print("- Dynamic real-time process monitor\n");
     set_color(COLOR_CYAN, COLOR_DARK);
-    print("  <binary.bin>       "); set_color(COLOR_GREY, COLOR_DARK); print("- Load and execute a binary from disk\n");
+    print("  ps                 "); set_color(COLOR_GREY, COLOR_DARK); print("- List active processes\n");
+    set_color(COLOR_CYAN, COLOR_DARK);
+    print("  shutdown           "); set_color(COLOR_GREY, COLOR_DARK); print("- Power off the computer\n");
+    set_color(COLOR_CYAN, COLOR_DARK);
+    print("  restart            "); set_color(COLOR_GREY, COLOR_DARK); print("- Reboot the computer\n");
 }
 
 
@@ -81,12 +64,17 @@ static void handle_theme(const char* name) {
     swipe_transition();
 }
 
+static void local_strcat(char* dest, const char* src) {
+    while (*dest) dest++;
+    while ((*dest++ = *src++));
+}
+
+
 int main(void) {
     clear_screen();
     print_banner();
 
     char input[128];
-    char file_buffer[4096];
 
     while (1) {
         // Print shell prompt
@@ -139,16 +127,26 @@ int main(void) {
                 print("Usage: cat <filename>\n");
                 set_color(COLOR_WHITE, COLOR_DARK);
             } else {
-                memset(file_buffer, 0, sizeof(file_buffer));
-                int read_size = read_file(filename, file_buffer);
-                if (read_size < 0) {
+                int fd = open(filename, 0);
+                if (fd < 0) {
                     set_color(0x00FF3333, COLOR_DARK);
                     print("Error: File not found or read failure.\n");
                     set_color(COLOR_WHITE, COLOR_DARK);
                 } else {
-                    file_buffer[read_size] = '\0';
-                    print(file_buffer);
+                    char chunk[512];
+                    int bytes_read;
+                    while ((bytes_read = read(fd, chunk, sizeof(chunk) - 1)) > 0) {
+                        for (int i = 0; i < bytes_read; i++) {
+                            char c = chunk[i];
+                            if ((c >= 32 && c < 127) || c == '\n' || c == '\r' || c == '\t') {
+                                putchar(c);
+                            } else {
+                                putchar('.');
+                            }
+                        }
+                    }
                     print("\n");
+                    close(fd);
                 }
             }
         }
@@ -162,43 +160,28 @@ int main(void) {
             }
         }
         // 6. Calc command
-        else if (strcmp(cmd, "calc") == 0) {
-            print("Launching calculator...\n");
-            int exec_res = exec("calc.bin");
-            if (exec_res < 0) {
+        else if (strcmp(cmd, "open") == 0) {
+            char* app = strtok(NULL, " ");
+            if (app == NULL) {
                 set_color(0x00FF3333, COLOR_DARK);
-                print("Error: calc.bin not found on disk.\n");
+                print("Usage: open <app_name>\n");
                 set_color(COLOR_WHITE, COLOR_DARK);
-            }
-        }
-        // 7. Blaster command
-        else if (strcmp(cmd, "blaster") == 0) {
-            print("Launching space invaders game...\n");
-            int exec_res = exec("blaster.bin");
-            if (exec_res < 0) {
-                set_color(0x00FF3333, COLOR_DARK);
-                print("Error: blaster.bin not found on disk.\n");
-                set_color(COLOR_WHITE, COLOR_DARK);
-            }
-        }
-        // 8. Exploit command
-        else if (strcmp(cmd, "exploit") == 0) {
-            print("Launching exploit verification suite...\n");
-            int exec_res = exec("exploit.bin");
-            if (exec_res < 0) {
-                set_color(0x00FF3333, COLOR_DARK);
-                print("Error: exploit.bin not found on disk.\n");
-                set_color(COLOR_WHITE, COLOR_DARK);
-            }
-        }
-        // 9. Hello command
-        else if (strcmp(cmd, "hello") == 0) {
-            print("Launching hello demo...\n");
-            int exec_res = exec("hello.bin");
-            if (exec_res < 0) {
-                set_color(0x00FF3333, COLOR_DARK);
-                print("Error: hello.bin not found on disk.\n");
-                set_color(COLOR_WHITE, COLOR_DARK);
+            } else {
+                char app_bin[64];
+                strcpy(app_bin, app);
+                if (strlen(app) < 4 || strcmp(app + strlen(app) - 4, ".bin") != 0) {
+                    local_strcat(app_bin, ".bin");
+                }
+                print("Launching "); print(app_bin); print("...\n");
+                int exec_res = exec(app_bin);
+                if (exec_res < 0) {
+                    exec_res = exec(app);
+                }
+                if (exec_res < 0) {
+                    set_color(0x00FF3333, COLOR_DARK);
+                    print("Error: Could not open "); print(app); print("\n");
+                    set_color(COLOR_WHITE, COLOR_DARK);
+                }
             }
         }
         // ps command
@@ -341,21 +324,12 @@ int main(void) {
             print("Initiating system restart...\n");
             restart();
         }
-        // 10. External Binary execution
         else {
-            // Attempt to load and run external program from disk
-            print("Loading process "); print(cmd); print("...\n");
-            int exec_res = exec(orig_input);
-            if (exec_res < 0) {
-                set_color(0x00FF3333, COLOR_DARK);
-                print("Unknown command or binary: '");
-                print(cmd);
-                print("'\n");
-                set_color(COLOR_WHITE, COLOR_DARK);
-            }
-            // If exec succeeds, control jumps to the program, and we won't return here
-            // unless the process completes and control returns. But exec resets memory,
-            // so we actually restart or reboot if the program exit syscall is triggered.
+            set_color(0x00FF3333, COLOR_DARK);
+            print("Unknown command: '");
+            print(cmd);
+            print("'. Type 'help' for options.\n");
+            set_color(COLOR_WHITE, COLOR_DARK);
         }
         swap_buffers();
         print("\n");

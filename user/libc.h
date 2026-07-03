@@ -6,6 +6,20 @@
 #include <stdbool.h>
 
 // --------------------------------------------------------------------------
+// ZenithOS Theme Colors (aligned to cozy warm-beige theme)
+// --------------------------------------------------------------------------
+#define COLOR_DARK    0x00FAF7F2 // Soft Warm Beige background
+#define COLOR_WHITE   0x002C2825 // Warm Charcoal/Ebony foreground
+#define COLOR_GREY    0x005F5850 // Muted Warm Grey
+#define COLOR_CYAN    0x000F766E // Deep Teal
+#define COLOR_PURPLE  0x007C2D12 // Vibrant Terracotta
+#define COLOR_GREEN   0x0015803D // Forest Green
+#define COLOR_BLACK   0x000F172A // Slate 900
+#define COLOR_YELLOW  0x00B45309 // Dark Amber
+#define COLOR_MAGENTA 0x009D174D // Deep Rose
+#define COLOR_BLUE    0x001D4ED8 // Royal Blue
+
+// --------------------------------------------------------------------------
 // ZenithOS System Call Wrappers
 // --------------------------------------------------------------------------
 

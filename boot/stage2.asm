@@ -27,7 +27,7 @@ stage2_start:
     mov si, LOAD_KERNEL_MSG
     call print_string_16
 
-    mov cx, 128                 ; 128 sectors to read
+    mov cx, 256                 ; 256 sectors to read
     mov ax, 16                  ; Start LBA 16
     mov bx, 0x1000              ; Target segment
     mov es, bx
@@ -309,10 +309,10 @@ protected_mode_entry:
     mov word [0xB8000 + 158], 0x2F50
 
     ; Relocate the kernel from 0x10000 to 0x100000 (1MB mark)
-    ; 128 sectors = 65,536 bytes = 16,384 double-words (dwords)
+    ; 256 sectors = 131,072 bytes = 32,768 double-words (dwords)
     mov esi, 0x10000            ; Source
     mov edi, 0x100000           ; Destination (1MB)
-    mov ecx, 16384              ; Number of 32-bit dwords to copy
+    mov ecx, 32768              ; Number of 32-bit dwords to copy
     rep movsd                   ; Copy memory
 
     ; Visual indicator: print 'K' next to 'P' to signify kernel is loaded and ready
