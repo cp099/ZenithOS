@@ -5,6 +5,9 @@
 #include "zenithfs.h"
 #include "heap.h"
 
+extern void serial_print(const char* str);
+extern void serial_print_hex(uint32_t val);
+
 // Forward declarations of standard helpers
 static void local_memcpy(void* dest, const void* src, size_t len) {
     char* d = (char*)dest;
@@ -35,7 +38,7 @@ static int keyboard_read(fs_node_t* node, uint32_t offset, uint32_t size, uint8_
     uint32_t count = 0;
     while (count < size) {
         char c = keyboard_getchar();
-        if (c == '\b') {
+        if (c == '\b' || c == 127) {
             if (count > 0) {
                 count--;
                 print_char_default('\b');
@@ -48,6 +51,7 @@ static int keyboard_read(fs_node_t* node, uint32_t offset, uint32_t size, uint8_
         graphics_swap_buffers();
         if (c == '\n') break;
     }
+
     return count;
 }
 
@@ -165,6 +169,7 @@ static int zfs_read(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* bu
     
     uint8_t* file_buf = (uint8_t*)node->inode;
     local_memcpy(buffer, file_buf + offset, size);
+
     return size;
 }
 
@@ -245,6 +250,7 @@ int vfs_open(const char* filename, int flags) {
         node->close = zfs_close;
         
         int32_t fsize = zenithfs_get_file_size(zfs_name);
+
         if (fsize >= 0) {
             node->size = fsize;
             if (fsize > 0) {

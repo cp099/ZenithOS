@@ -18,7 +18,9 @@ bool syscall_verify_pointer(const void* ptr, uint32_t size) {
     // Strict User virtual space check (1GB to 1GB + 128MB)
     // Ensures pointers do not point to kernel space (under 1GB) and handle overflow/wrap-around.
     if (start >= 0x40000000 && end <= 0x48000000 && end >= start) {
-        return true;
+        uint32_t cr3;
+        __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+        return vmm_is_range_mapped((uint32_t*)cr3, start, size);
     }
     
     serial_print("  [!] syscall_verify_pointer failed: ptr=0x");
@@ -34,22 +36,18 @@ bool syscall_verify_pointer(const void* ptr, uint32_t size) {
 bool syscall_verify_string(const char* str, uint32_t max_len) {
     if (str == NULL) return false;
     uint32_t addr = (uint32_t)str;
+    uint32_t cr3;
+    __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+    
     for (uint32_t len = 0; len < max_len; len++) {
         if (addr < 0x40000000 || addr >= 0x48000000) return false;
+        if (!vmm_is_range_mapped((uint32_t*)cr3, addr, 1)) return false;
         if (*(const char*)addr == '\0') return true;
         addr++;
     }
     return false;
 }
 
-
-static int local_strcmp(const char* s1, const char* s2) {
-    while (*s1 && (*s1 == *s2)) {
-        s1++;
-        s2++;
-    }
-    return *(unsigned char*)s1 - *(unsigned char*)s2;
-}
 
 // Master syscall dispatcher (triggered on int 0x80 / Interrupt 128)
 static void syscall_handler(registers_t* regs) {
@@ -157,6 +155,9 @@ static void syscall_handler(registers_t* regs) {
                     if (size <= 0) {
                         regs->eax = -1;
                     } else {
+                        uint32_t eflags_exec;
+                        __asm__ volatile("pushfl; pop %0; cli" : "=r"(eflags_exec));
+
                         Task* cur = get_current_task();
 
                         extern void user_entry_wrapper(void);
@@ -231,21 +232,17 @@ static void syscall_handler(registers_t* regs) {
                         serial_print(argv_strings[0]);
                         serial_print(" (File size: ");
                         serial_print_hex(size);
-                        serial_print(" bytes)\n");
+                        serial_print(" bytes) user_esp=0x");
+                        serial_print_hex(child->user_esp);
+                        serial_print("\n");
 
-                        int w = 640, h = 400;
-                        if (local_strcmp(argv_strings[0], "calc.bin") == 0 || local_strcmp(argv_strings[0], "calc") == 0) {
-                            w = 480; h = 320;
-                        } else if (local_strcmp(argv_strings[0], "blaster.bin") == 0 || local_strcmp(argv_strings[0], "blaster") == 0) {
-                            w = 800; h = 480;
-                        }
-                        extern void create_window_for_task(struct Task* owner, int w, int h, const char* title);
-                        create_window_for_task(child, w, h, argv_strings[0]);
+
 
                         cur->state = TASK_BLOCKED;
                         child->state = TASK_READY;
 
                         regs->eax = 0;
+                        __asm__ volatile("push %0; popfl" : : "r"(eflags_exec));
                         scheduler_yield();
                     }
                 }
@@ -338,6 +335,9 @@ static void syscall_handler(registers_t* regs) {
                 print_string_default("\n[SYSCALL ERROR] Access Violation: Invalid pointer passed to SYS_GET_TASKS!\n");
                 regs->eax = -1;
             } else {
+                uint32_t eflags;
+                __asm__ volatile("pushfl; pop %0; cli" : "=r"(eflags));
+
                 Task* head = get_task_list_head();
                 uint32_t count = 0;
                 if (head != NULL) {
@@ -365,6 +365,8 @@ static void syscall_handler(registers_t* regs) {
                     } while (curr != head);
                 }
                 regs->eax = count;
+
+                __asm__ volatile("push %0; popfl" : : "r"(eflags));
             }
             break;
         }

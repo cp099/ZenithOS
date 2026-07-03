@@ -3,6 +3,8 @@
 #include "paging.h"
 #include "vfs.h"
 
+#define KERNEL_STACK_SIZE 32768
+
 
 extern void switch_context(uint32_t* old_esp, uint32_t new_esp);
 extern void set_kernel_stack(uint32_t stack_phys);
@@ -25,11 +27,8 @@ void reap_dead_tasks(void) {
                 task_to_reap->fd_table[i] = NULL;
             }
         }
-        extern void destroy_window_for_task(struct Task* owner);
-        destroy_window_for_task(task_to_reap);
-
         if (task_to_reap->kstack != 0 && task_to_reap->id != 0) {
-            kfree((void*)(task_to_reap->kstack - 4096));
+            kfree((void*)(task_to_reap->kstack - KERNEL_STACK_SIZE));
         }
         kfree(task_to_reap);
         task_to_reap = NULL;
@@ -50,9 +49,6 @@ void task_terminate(Task* task, int exit_code) {
             task->fd_table[i] = NULL;
         }
     }
-
-    extern void destroy_window_for_task(struct Task* owner);
-    destroy_window_for_task(task);
 
     uint32_t* child_dir = (uint32_t*)task->cr3;
     if (child_dir != (uint32_t*)vmm_get_kernel_page_dir()) {
@@ -75,6 +71,9 @@ void task_terminate(Task* task, int exit_code) {
     if (task == current_task) {
         scheduler_yield();
     } else {
+        uint32_t eflags;
+        __asm__ volatile("pushfl; pop %0; cli" : "=r"(eflags));
+
         // Safe reaping of a non-current task to prevent task list and stack memory leaks
         Task* prev = task_list_head;
         if (prev != NULL) {
@@ -98,9 +97,11 @@ void task_terminate(Task* task, int exit_code) {
         
         // Free stack and task struct
         if (task->kstack != 0) {
-            kfree((void*)(task->kstack - 4096));
+            kfree((void*)(task->kstack - KERNEL_STACK_SIZE));
         }
         kfree(task);
+
+        __asm__ volatile("push %0; popfl" : : "r"(eflags));
     }
 }
 
@@ -123,6 +124,12 @@ static void task_wrapper(void (*entry)(void)) {
     
     entry();
     task_exit();
+}
+
+static void idle_task_func(void) {
+    while (1) {
+        __asm__ volatile("hlt");
+    }
 }
 
 void scheduler_init(void) {
@@ -149,6 +156,9 @@ void scheduler_init(void) {
     
     current_task = boot_task;
     task_list_head = boot_task;
+
+    // Create the system idle task
+    task_create(idle_task_func, 0);
 }
 
 Task* task_create(void (*entry)(void), uint32_t flags) {
@@ -157,8 +167,8 @@ Task* task_create(void (*entry)(void), uint32_t flags) {
     Task* new_task = (Task*)kmalloc(sizeof(Task));
     new_task->id = next_task_id++;
     
-    // Allocate a 4KB stack
-    uint32_t stack_size = 4096;
+    // Allocate a KERNEL_STACK_SIZE stack
+    uint32_t stack_size = KERNEL_STACK_SIZE;
     void* stack_mem = kmalloc(stack_size);
     new_task->kstack = (uint32_t)stack_mem + stack_size;
     new_task->cr3 = vmm_get_kernel_page_dir(); // Default kernel directory
@@ -195,9 +205,12 @@ Task* task_create(void (*entry)(void), uint32_t flags) {
     
     new_task->esp = (uint32_t)stack;
     
-    // Add to task circular list
+    // Add to task circular list with interrupts disabled
+    uint32_t eflags;
+    __asm__ volatile("pushfl; pop %0; cli" : "=r"(eflags));
     new_task->next = current_task->next;
     current_task->next = new_task;
+    __asm__ volatile("push %0; popfl" : : "r"(eflags));
     
     return new_task;
 }
@@ -277,6 +290,11 @@ void scheduler_yield(void) {
         if (current_cr3 != next_task->cr3) {
             __asm__ volatile("mov %0, %%cr3" : : "r"(next_task->cr3));
         }
+    }
+
+    if (old_task == next_task) {
+        __asm__ volatile("sti");
+        return;
     }
 
     // Perform context switch
